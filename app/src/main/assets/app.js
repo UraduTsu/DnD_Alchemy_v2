@@ -326,6 +326,17 @@ function ensureSelectedSlot(){
   if(selectedSlot == null || selectedSlot < 0 || selectedSlot >= caSlots.length){
     selectedSlot = 0;
   }
+
+function fixCauldronHeight(){
+  const el = document.querySelector('.cauldron');
+  if(!el) return;
+  // Some Android WebViews ignore CSS min()/aspect-ratio and the cauldron collapses to height=0.
+  // Force height based on computed width to keep absolute-positioned slots inside.
+  const w = el.getBoundingClientRect().width || el.clientWidth || 0;
+  if(w > 0){
+    el.style.height = `${Math.round(w)}px`;
+  }
+}
 }
 
 function pickSlotForAdd(){
@@ -683,7 +694,7 @@ function setTab(tab){
   document.getElementById(map[tab]).classList.remove('hidden');
   localStorage.setItem('nxa_ui_tab', tab);
   if(tab==='inv') renderInventory();
-  if(tab==='craft') renderReqList();
+  if(tab==='craft'){ renderReqList(); fixCauldronHeight(); }
   if(tab==='recipes') renderRecipes();
   if(tab==='import') renderHistory();
 }
@@ -875,5 +886,7 @@ document.getElementById('btn-copy-req').addEventListener('click', async()=>{
 
 window.addEventListener('load', ()=>{
   wire();
+  fixCauldronHeight();
+  window.addEventListener('resize', fixCauldronHeight);
   renderInventory(); renderReqList(); renderRecipes(); renderHistory();
 });
