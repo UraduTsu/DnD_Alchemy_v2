@@ -80,7 +80,7 @@
         </div>
         <div class="hr"></div>
         <div class="row">
-          <input class="input" id="inv-filter" placeholder="Пошук: назва / сутність / рідкість" />
+          <input class="input" id="inv-filter" placeholder="Пошук: сутність" />
         </div>
       </div>
       <div class="list" id="inv-list"></div>
@@ -97,28 +97,24 @@
         </div>
         <div class="hr"></div>
 
+        
         <div class="grid two">
           <div>
-            <label class="muted" style="font-size:12px;">Назва інгредієнта</label>
-            <input class="input" id="cr-name" placeholder="Напр. 'Пелюстки нічної орхідеї' або 'Ignis'" />
+            <label class="muted" style="font-size:12px;">Сутність (тип)</label>
+            <select class="input" id="cr-ess">
+              <option value="">(обери сутність)</option>
+              <option>Aether</option><option>Ignis</option><option>Mortis</option><option>Solidus</option><option>Vitalis</option>
+            </select>
+            <div class="muted" style="font-size:12px; margin-top:6px;">
+              Доступно в інвентарі: <span class="mono" id="cr-avail">0</span>
+            </div>
           </div>
           <div>
             <label class="muted" style="font-size:12px;">К-сть</label>
             <input class="input" id="cr-qty" type="number" min="1" value="1" />
-          </div>
-          <div>
-            <label class="muted" style="font-size:12px;">Сутність</label>
-            <select class="input" id="cr-ess">
-              <option value="">(не вказано)</option>
-              <option>Aether</option><option>Ignis</option><option>Mortis</option><option>Solidus</option><option>Vitalis</option>
-            </select>
-          </div>
-          <div>
-            <label class="muted" style="font-size:12px;">Рідкість</label>
-            <select class="input" id="cr-rar">
-              <option value="">(не вказано)</option>
-              <option>Common</option><option>Uncommon</option><option>Rare</option><option>Very Rare</option><option>Legendary</option>
-            </select>
+            <div class="muted" style="font-size:12px; margin-top:6px;">
+              Порада: кількість перевіряється по інвентарю.
+            </div>
           </div>
         </div>
 
@@ -160,11 +156,12 @@
           <div>
             <div style="font-weight:800; font-size:16px;">Книга рецептів</div>
             <div class="muted" style="font-size:12px; margin-top:4px;">
-              Тут приходить лише <b>візуальний опис</b>. Поле “Нотатки/ефекти” — твоє, редагуй як хочеш.
+              Тут зберігається тільки: <b>назва</b>, <b>твій опис</b>, і <b>з яких сутностей зроблено</b>.
             </div>
           </div>
           <div class="spacer"></div>
-          <input class="input" id="rec-filter" placeholder="Пошук…" style="max-width:220px;" />
+          <button class="btn small danger" id="btn-reset-recipes">Скинути рецепти</button>
+          <input class="input" id="rec-filter" placeholder="Пошук (назва або сутність)..." style="max-width:240px;" />
         </div>
       </div>
       <div class="list" id="rec-list"></div>

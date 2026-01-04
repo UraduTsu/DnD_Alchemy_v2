@@ -8,6 +8,22 @@ const REQ_PREFIX  = "NXREQ|";
 
 const STORAGE_KEY = "nxa_player_state_v1";
 
+const ESS_META = {
+  Vitalis: {ua:"Життя", emoji:"💚"},
+  Mortis: {ua:"Смерть", emoji:"💀"},
+  Ignis: {ua:"Енергія", emoji:"🔥"},
+  Solidus: {ua:"Матерія", emoji:"🛡️"},
+  Aether: {ua:"Магія", emoji:"✨"},
+  Rift: {ua:"Розрив", emoji:"🕳️"},
+};
+
+function essenceLabel(e){
+  const m = ESS_META[e];
+  if(m) return `${m.emoji} ${m.ua} (${e})`;
+  return e || "—";
+}
+
+
 function nowIso(){ return new Date().toISOString(); }
 function toast(msg){
   const el = document.createElement('div');
@@ -64,8 +80,8 @@ function defaultState(){
     v: 1,
     created_at: nowIso(),
     imported_pack_ids: [],
-    inventory: [], // [{name, essence, rarity, qty}]
-    recipes: [],   // [{recipe_id, title, gm_visual, visual, notes, created_at, updated_at}]
+    inventory: [], // [{essence, qty}] (simplified)
+    recipes: [],   // [{recipe_id, title, gm_visual, visual, essences, created_at, updated_at}]
     history: []    // [{ts, kind, summary, data}]
   };
 }
@@ -78,16 +94,15 @@ function loadState(){
     const merged = Object.assign(defaultState(), st);
 
     // Backward compatibility: ensure recipe fields exist.
-    merged.recipes = (merged.recipes || []).map(r => {
-      if(!r) return r;
-      if(typeof r.gm_visual !== 'string') r.gm_visual = (r.visual || '');
-      if(typeof r.visual !== 'string') r.visual = (r.gm_visual || '');
-      if(typeof r.notes !== 'string') r.notes = '';
-      return r;
-    });
+    merged.recipes = (merged.recipes || []).filter(Boolean).map(r => {
+  if(typeof r.gm_visual !== 'string') r.gm_visual = (r.visual || '');
+  if(typeof r.visual !== 'string') r.visual = (r.gm_visual || '');
+  if(!r.essences || typeof r.essences !== 'object') r.essences = {};
+  return r;
+});
 
     merged.imported_pack_ids = Array.isArray(merged.imported_pack_ids) ? merged.imported_pack_ids : [];
-    merged.inventory = Array.isArray(merged.inventory) ? merged.inventory : [];
+    merged.inventory = normalizeInventory(Array.isArray(merged.inventory) ? merged.inventory : []);
     merged.history = Array.isArray(merged.history) ? merged.history : [];
 
     return merged;
@@ -95,39 +110,69 @@ function loadState(){
 }
 function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
-function invKey(it){ return `${it.name}|${it.essence||''}|${it.rarity||''}`.toLowerCase(); }
+function normalizeInventory(inv){
+  const map = {};
+  for(const it of (inv||[])){
+    if(!it) continue;
+    const essence = (it.essence||'').toString().trim() || (it.name||'').toString().trim();
+    const qty = Number(it.qty||0);
+    if(!essence || !Number.isFinite(qty) || qty===0) continue;
+    map[essence] = (map[essence]||0) + qty;
+  }
+  return Object.entries(map)
+    .filter(([,q])=>Number.isFinite(q) && q>0)
+    .map(([essence,qty])=>({essence, qty}));
+}
+
+
+function invKey(it){ return `${(it.essence||'').toLowerCase()}`; }
 
 function addInventoryDelta(deltaItems){
+  // We track inventory only by essence type (players don't need names/rarities).
   for(const d of (deltaItems||[])) {
-    const key = invKey(d);
-    let item = state.inventory.find(x => invKey(x) === key);
+    if(!d) continue;
+    const essence = ((d.essence||'') || (d.name||'')).toString().trim();
+    if(!essence) continue;
+    const qtyDelta = Number(d.qty_delta||0);
+    if(!Number.isFinite(qtyDelta) || qtyDelta===0) continue;
+
+    const key = essence.toLowerCase();
+    let item = state.inventory.find(x => ((x.essence||'').toLowerCase() === key));
     if(!item){
-      item = {name: d.name, essence: d.essence||'', rarity: d.rarity||'', qty: 0};
+      item = {essence, qty: 0};
       state.inventory.push(item);
     }
-    item.qty = Math.max(0, (item.qty||0) + (Number(d.qty_delta)||0));
+    item.qty = Math.max(0, Number(item.qty||0) + qtyDelta);
   }
-  state.inventory = state.inventory.filter(x => (x.qty||0) > 0);
+  state.inventory = state.inventory.filter(x => Number(x.qty||0) > 0);
   saveState();
 }
 
-function upsertRecipe({recipe_id, title, visual}){
+function upsertRecipe({recipe_id, title, visual, essences}){
   let r = state.recipes.find(x => x.recipe_id === recipe_id);
   const incomingVisual = (visual || '').trim();
+  const incomingEss = (essences && typeof essences === 'object') ? essences : {};
+
   if(!r){
     r = {
       recipe_id,
-      title: title || "Невідомий рецепт",
+      title: title || "Невідомий предмет",
       gm_visual: incomingVisual,
       visual: incomingVisual, // editable by player
-      notes: "",
+      essences: incomingEss,
       created_at: nowIso(),
       updated_at: nowIso()
     };
     state.recipes.unshift(r);
   }else{
-    // Update title if provided
     if(title && title.trim()) r.title = title.trim();
+
+    // Update essence composition if provided
+    if(incomingEss && Object.keys(incomingEss).length){
+      r.essences = incomingEss;
+    } else if(!r.essences || typeof r.essences !== 'object'){
+      r.essences = {};
+    }
 
     // Track the latest GM visual snapshot
     const prevGm = (r.gm_visual || '').trim();
@@ -141,6 +186,7 @@ function upsertRecipe({recipe_id, title, visual}){
     }
     r.updated_at = nowIso();
   }
+
   saveState();
   return r;
 }
@@ -163,11 +209,13 @@ function renderInventory(){
   const filter = normalizeText(document.getElementById('inv-filter').value);
   const list = document.getElementById('inv-list');
   list.innerHTML = '';
-  const items = [...state.inventory].sort((a,b)=> (a.essence||'').localeCompare(b.essence||'') || (a.rarity||'').localeCompare(b.rarity||'') || (a.name||'').localeCompare(b.name||''));
+
+  const items = [...state.inventory].sort((a,b)=> (a.essence||'').localeCompare(b.essence||''));
   const filtered = items.filter(it => {
-    const hay = `${it.name} ${it.essence} ${it.rarity}`.toLowerCase();
+    const hay = `${it.essence}`.toLowerCase();
     return !filter || hay.includes(filter);
   });
+
   if(filtered.length === 0){
     const c = document.createElement('div');
     c.className = 'card muted';
@@ -175,14 +223,15 @@ function renderInventory(){
     list.appendChild(c);
     return;
   }
+
   for(const it of filtered){
     const el = document.createElement('div');
     el.className = 'item';
     el.innerHTML = `
       <div class="top">
         <div style="flex:1;">
-          <div class="name">${escapeHtml(it.name || '—')}</div>
-          <div class="meta">${escapeHtml(it.essence || '—')} • ${escapeHtml(it.rarity || '—')}</div>
+          <div class="name">${escapeHtml(essenceLabel(it.essence))}</div>
+          <div class="meta">${escapeHtml(it.essence || '—')}</div>
         </div>
         <div class="qty">${Number(it.qty||0)}</div>
       </div>
@@ -191,26 +240,49 @@ function renderInventory(){
   }
 }
 
+function invQty(essence){
+  const key = (essence||'').toLowerCase();
+  const it = state.inventory.find(x => (x.essence||'').toLowerCase() === key);
+  return Number(it?.qty||0);
+}
+
+function reqQty(essence){
+  const key = (essence||'').toLowerCase();
+  return reqItems.filter(x => (x.essence||'').toLowerCase() === key).reduce((s,x)=>s+Number(x.qty||0),0);
+}
+
+function updateCraftAvail(){
+  const e = document.getElementById('cr-ess')?.value || '';
+  const avail = invQty(e);
+  const used = reqQty(e);
+  const left = Math.max(0, avail - used);
+  const el = document.getElementById('cr-avail');
+  if(el) el.textContent = String(left);
+}
+
 let reqItems = [];
 function renderReqList(){
   const list = document.getElementById('req-list');
   list.innerHTML = '';
   document.getElementById('req-count').textContent = `${reqItems.length} позицій`;
+
   if(reqItems.length === 0){
     const d = document.createElement('div');
     d.className = 'item muted';
-    d.textContent = 'Додай хоча б 1 інгредієнт.';
+    d.textContent = 'Додай хоча б 1 сутність.';
     list.appendChild(d);
+    updateCraftAvail();
     return;
   }
+
   reqItems.forEach((it, idx)=>{
     const el = document.createElement('div');
     el.className = 'item';
     el.innerHTML = `
       <div class="top">
         <div style="flex:1;">
-          <div class="name">${escapeHtml(it.name || '—')} <span class="tag">x${it.qty}</span></div>
-          <div class="meta">${escapeHtml(it.essence || '—')} • ${escapeHtml(it.rarity || '—')}</div>
+          <div class="name">${escapeHtml(essenceLabel(it.essence))} <span class="tag">x${Number(it.qty||0)}</span></div>
+          <div class="meta">${escapeHtml(it.essence || '—')}</div>
         </div>
         <button class="btn small danger" data-del="${idx}">✕</button>
       </div>
@@ -221,31 +293,49 @@ function renderReqList(){
     });
     list.appendChild(el);
   });
+
+  updateCraftAvail();
+}
+
+function essencesToText(essences){
+  if(!essences || typeof essences !== 'object') return '';
+  const entries = Object.entries(essences)
+    .filter(([k,v])=>k && Number(v||0) > 0)
+    .sort((a,b)=>a[0].localeCompare(b[0]));
+  return entries.map(([k,v])=>{
+    const n = Number(v||0);
+    return n > 1 ? `${k}×${n}` : k;
+  }).join(', ');
 }
 
 function renderRecipes(){
   const filter = normalizeText(document.getElementById('rec-filter').value);
   const list = document.getElementById('rec-list');
   list.innerHTML = '';
+
   const items = [...state.recipes].filter(r => {
-    const hay = `${r.title} ${r.visual} ${r.notes}`.toLowerCase();
+    const ess = essencesToText(r.essences);
+    const hay = `${r.title} ${r.visual} ${ess}`.toLowerCase();
     return !filter || hay.includes(filter);
   });
+
   if(items.length === 0){
     const c = document.createElement('div');
     c.className = 'card muted';
-    c.textContent = 'Рецептів ще нема. Вони відкриваються через результат крафту або код від майстра.';
+    c.textContent = 'Рецептів ще нема. Вони відкриваються після крафту або через код від майстра.';
     list.appendChild(c);
     return;
   }
+
   for(const r of items){
     const el = document.createElement('div');
     el.className = 'item';
+    const ess = essencesToText(r.essences);
     el.innerHTML = `
       <div class="top">
         <div style="flex:1;">
-          <div class="name">${escapeHtml(r.title || 'Невідомий рецепт')}</div>
-          <div class="meta mono">${escapeHtml(r.recipe_id)}</div>
+          <div class="name">${escapeHtml(r.title || 'Невідомий предмет')}</div>
+          <div class="meta">${ess ? ('Склад: ' + escapeHtml(ess)) : 'Склад: —'}</div>
         </div>
         <button class="btn small" data-open="${r.recipe_id}">Відкрити</button>
       </div>
@@ -258,59 +348,58 @@ function renderRecipes(){
 function openRecipe(recipe_id){
   const r = state.recipes.find(x => x.recipe_id === recipe_id);
   if(!r) return;
-  const visual = r.visual || '';
-  const notes  = r.notes || '';
+
+  const desc = r.visual || '';
+  const ess = essencesToText(r.essences);
+
   const wrap = document.createElement('div');
   wrap.className = 'card';
   wrap.innerHTML = `
     <div class="row">
-      <div style="font-weight:850; font-size:16px;">${escapeHtml(r.title || 'Невідомий рецепт')}</div>
+      <div style="font-weight:850; font-size:16px;">${escapeHtml(r.title || 'Невідомий предмет')}</div>
       <div class="spacer"></div>
       <button class="btn small danger" id="close-rec">Закрити</button>
     </div>
+
     <div class="hr"></div>
-    <div class="muted" style="font-size:12px; margin-bottom:6px;">Опис рецепту (редагується гравцем)</div>
-    <textarea id="rec-visual" class="input" style="min-height:120px; font-family:var(--mono);">${escapeHtml(visual || '')}</textarea>
-    <div class="row" style="margin-top:8px;">
-      <button class="btn" id="use-gm">Повернути «від майстра»</button>
-      <div class="spacer"></div>
-      <button class="btn" id="copy-visual">Скопіювати опис</button>
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">Склад (сутності)</div>
+    <div class="item" style="margin-bottom:10px;">
+      <div class="meta">${ess ? escapeHtml(ess) : '—'}</div>
     </div>
-    <div class="hr"></div>
-    <div class="muted" style="font-size:12px; margin-bottom:6px;">Мої нотатки / ефекти (додатково)</div>
-    <textarea id="rec-notes" class="input" style="min-height:120px; font-family:var(--mono);">${escapeHtml(notes)}</textarea>
+
+    <div class="muted" style="font-size:12px; margin-bottom:6px;">Опис (редагується гравцем)</div>
+    <textarea id="rec-desc" class="input" style="min-height:140px; font-family:var(--mono);">${escapeHtml(desc)}</textarea>
+
     <div class="row" style="margin-top:10px;">
       <button class="btn ok" id="save-recipe">Зберегти</button>
+      <button class="btn" id="copy-desc">Скопіювати</button>
       <div class="spacer"></div>
-      <button class="btn small" id="show-gm">Показати оригінал</button>
+      <button class="btn small" id="restore-gm">Повернути «від майстра»</button>
     </div>
-    <div class="item mono hidden" id="gm-box" style="white-space:pre-wrap; margin-top:10px;"></div>
   `;
+
   const host = document.getElementById('view-recipes');
   host.prepend(wrap);
   wrap.scrollIntoView({behavior:'smooth', block:'start'});
+
   wrap.querySelector('#close-rec').addEventListener('click', ()=>wrap.remove());
   wrap.querySelector('#save-recipe').addEventListener('click', ()=>{
-    r.visual = wrap.querySelector('#rec-visual').value || '';
-    r.notes = wrap.querySelector('#rec-notes').value || '';
+    r.visual = wrap.querySelector('#rec-desc').value || '';
     r.updated_at = nowIso();
     saveState();
     toast('Збережено');
-  });
-  wrap.querySelector('#copy-visual').addEventListener('click', async()=>{
-    try{ await navigator.clipboard.writeText(wrap.querySelector('#rec-visual').value || ''); toast('Скопійовано'); }catch(_){ toast('Не вдалось скопіювати'); }
+    renderRecipes();
   });
 
-  wrap.querySelector('#use-gm').addEventListener('click', ()=>{
+  wrap.querySelector('#copy-desc').addEventListener('click', async()=>{
+    try{ await navigator.clipboard.writeText(wrap.querySelector('#rec-desc').value || ''); toast('Скопійовано'); }
+    catch(_){ toast('Не вдалось скопіювати'); }
+  });
+
+  wrap.querySelector('#restore-gm').addEventListener('click', ()=>{
     const gm = r.gm_visual || '';
-    wrap.querySelector('#rec-visual').value = gm;
+    wrap.querySelector('#rec-desc').value = gm;
     toast('Вставлено оригінал');
-  });
-
-  wrap.querySelector('#show-gm').addEventListener('click', ()=>{
-    const box = wrap.querySelector('#gm-box');
-    box.textContent = (r.gm_visual || '(порожньо)');
-    box.classList.toggle('hidden');
   });
 }
 
@@ -353,13 +442,13 @@ function applyPayload(payload){
     const visual = data.visual_description || '';
     pushHistory('craft', title, data);
     if(data.discover_recipe && data.recipe_id){
-      upsertRecipe({recipe_id: data.recipe_id, title: data.recipe_title || title, visual});
+      upsertRecipe({recipe_id: data.recipe_id, title: data.recipe_title || title, visual, essences: data.essences || {}});
       pushHistory('recipe', 'Відкрито рецепт (візуальний опис)', {recipe_id:data.recipe_id});
     }
   } else if(t === 'recipe_unlock') {
     const data = payload.data || {};
     if(!data.recipe_id) throw new Error('Нема recipe_id');
-    upsertRecipe({recipe_id: data.recipe_id, title: data.recipe_title || 'Невідомий рецепт', visual: data.visual_description || ''});
+    upsertRecipe({recipe_id: data.recipe_id, title: data.recipe_title || 'Невідомий предмет', visual: data.visual_description || '', essences: data.essences || {}});
     pushHistory('recipe', 'Відкрито рецепт (візуальний опис)', data);
   } else {
     throw new Error('Невідомий тип пакунка: ' + t);
@@ -387,6 +476,9 @@ function wire(){
   document.getElementById('inv-filter').addEventListener('input', renderInventory);
   document.getElementById('rec-filter').addEventListener('input', renderRecipes);
 
+  document.getElementById('cr-ess').addEventListener('change', updateCraftAvail);
+  document.getElementById('cr-qty').addEventListener('input', updateCraftAvail);
+
   document.getElementById('btn-reset').addEventListener('click', ()=>{
     if(confirm('Скинути інвентар, рецепти та історію на цьому телефоні?')){
       localStorage.removeItem(STORAGE_KEY);
@@ -397,17 +489,36 @@ function wire(){
     }
   });
 
+  document.getElementById('btn-reset-recipes').addEventListener('click', ()=>{
+    if(confirm('Скинути всі рецепти на цьому телефоні?')){
+      state.recipes = [];
+      saveState();
+      renderRecipes();
+      toast('Рецепти скинуто');
+    }
+  });
+
   document.getElementById('btn-add-req').addEventListener('click', ()=>{
-    const name = document.getElementById('cr-name').value.trim();
-    const qty  = Math.max(1, Number(document.getElementById('cr-qty').value||1));
     const essence = document.getElementById('cr-ess').value;
-    const rarity  = document.getElementById('cr-rar').value;
-    if(!name){ toast('Вкажи назву'); return; }
-    reqItems.push({name, qty, essence, rarity});
-    document.getElementById('cr-name').value='';
+    const qty  = Math.max(1, Number(document.getElementById('cr-qty').value||1));
+    if(!essence){ toast('Обери сутність'); return; }
+
+    const avail = invQty(essence);
+    const already = reqQty(essence);
+    const left = Math.max(0, avail - already);
+
+    if(qty > left){
+      toast(`Недостатньо матеріалів: доступно ${left}`);
+      return;
+    }
+
+    // Merge same essence into one row
+    const key = essence.toLowerCase();
+    const existing = reqItems.find(x => (x.essence||'').toLowerCase() === key);
+    if(existing) existing.qty = Number(existing.qty||0) + qty;
+    else reqItems.push({essence, qty});
+
     document.getElementById('cr-qty').value='1';
-    document.getElementById('cr-ess').value='';
-    document.getElementById('cr-rar').value='';
     renderReqList();
   });
 
@@ -417,7 +528,19 @@ function wire(){
   });
 
   document.getElementById('btn-make-req').addEventListener('click', ()=>{
-    if(reqItems.length===0){ toast('Додай інгредієнти'); return; }
+    if(reqItems.length===0){ toast('Додай сутності'); return; }
+
+    // Validate against inventory (aggregate)
+    for(const it of reqItems){
+      const e = it.essence;
+      const need = Number(it.qty||0);
+      const have = invQty(e);
+      if(need > have){
+        toast(`Недостатньо ${e}: потрібно ${need}, є ${have}`);
+        return;
+      }
+    }
+
     const payload = { v: 1, type: 'craft_request', pack_id: crypto.randomUUID(), issued_at: nowIso(), items: reqItems };
     document.getElementById('req-code').value = makeReqCode(payload);
     toast('Код згенеровано');
@@ -460,11 +583,22 @@ function wire(){
   });
 
   document.getElementById('btn-paste').addEventListener('click', async()=>{
+    // Clipboard API часто блокується в офлайн/не-secure контексті (особливо в APK/WebView).
+    // Тому робимо fallback через prompt, де гравець може вставити вручну.
     try{
       const t = await navigator.clipboard.readText();
       if(t) { document.getElementById('imp-code').value = t.trim(); toast('Вставлено'); }
       else toast('Буфер порожній');
-    }catch(_){ toast('Не вдалось прочитати буфер'); }
+    }catch(_){
+      const t = prompt('Встав код сюди:', '');
+      if(t && t.trim()){
+        document.getElementById('imp-code').value = t.trim();
+        toast('Вставлено');
+      }else{
+        toast('Не вдалось прочитати буфер — встав вручну в поле');
+        document.getElementById('imp-code').focus();
+      }
+    }
   });
 
   document.getElementById('btn-export').addEventListener('click', ()=>{
