@@ -64,7 +64,65 @@
     .hr{height:1px; background:rgba(255,255,255,.08); margin:12px 0;}
     .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:84px; background:rgba(0,0,0,.72);
            border:1px solid rgba(255,255,255,.14); color:var(--text); padding:10px 12px; border-radius:999px; font-size:13px; z-index:50;}
-  </style>
+  /* Cauldron UI */
+    .cauldron-wrap{display:flex; justify-content:center; padding:10px 0 2px;}
+    .cauldron{position:relative; width:min(320px, 92vw); aspect-ratio:1/1; }
+    .pot{position:absolute; left:50%; top:54%; transform:translate(-50%,-50%); width:72%; height:62%;}
+    .pot-body{position:absolute; inset:14% 6% 6% 6%; border-radius:0 0 38% 38%;
+      background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.35));
+      border:1px solid rgba(255,255,255,.10);
+      box-shadow:0 14px 40px rgba(0,0,0,.45) inset, 0 10px 30px rgba(0,0,0,.35);
+    }
+    .pot-rim{position:absolute; left:6%; right:6%; top:8%; height:18%;
+      border-radius:999px;
+      background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(0,0,0,.35));
+      border:1px solid rgba(255,255,255,.10);
+      box-shadow:0 10px 22px rgba(0,0,0,.35);
+    }
+    .pot-glow{position:absolute; left:12%; right:12%; top:20%; height:32%;
+      border-radius:999px;
+      background:radial-gradient(circle at 50% 50%, rgba(96,165,250,.30), rgba(96,165,250,0) 65%);
+      filter:blur(1px);
+      pointer-events:none;
+    }
+
+    .cslot{
+      position:absolute; width:44%; height:18%;
+      border-radius:999px;
+      background:rgba(17,24,39,.72);
+      border:1px solid rgba(255,255,255,.10);
+      color:var(--text);
+      padding:8px 10px;
+      display:flex; align-items:center; justify-content:space-between;
+      gap:10px;
+      box-shadow:0 8px 20px rgba(0,0,0,.35);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .cslot:active{transform:scale(.99);}
+    .cslot.selected{outline:2px solid rgba(96,165,250,.8); box-shadow:0 0 0 4px rgba(96,165,250,.18), 0 12px 30px rgba(0,0,0,.40);}
+    .cslot .left{display:flex; flex-direction:column; align-items:flex-start; min-width:0; flex:1;}
+    .cslot .title{font-weight:800; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    .cslot .sub{font-size:11px; color:var(--muted);}
+    .cslot .qtyctl{display:flex; align-items:center; gap:6px;}
+    .cslot .qty{font-family:var(--mono); font-size:12px;}
+    .cslot .qbtn{
+      width:30px; height:28px; border-radius:10px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.06); color:var(--text);
+      display:flex; align-items:center; justify-content:center;
+    }
+    .cslot .qbtn:active{transform:scale(.98);}
+    .cslot .rm{width:30px; height:28px; border-radius:10px; border:1px solid rgba(248,113,113,.35);
+      background:rgba(248,113,113,.12); color:var(--text);
+      display:flex; align-items:center; justify-content:center;
+    }
+
+    /* Slot positions (4 around the rim) */
+    .cslot[data-slot="0"]{left:6%; top:8%;}
+    .cslot[data-slot="1"]{right:6%; top:8%;}
+    .cslot[data-slot="2"]{left:6%; bottom:10%;}
+    .cslot[data-slot="3"]{right:6%; bottom:10%;}
+</style>
 </head>
 <body>
 <div class="app">
@@ -96,76 +154,58 @@
     </section>
 
     <section id="view-craft" class="hidden">
-      <div class="card">
-        <div style="font-weight:800; font-size:16px;">Запит на крафт</div>
-        <div class="muted" style="font-size:12px; margin-top:4px;">
-          Це <b>не витрачає</b> матеріали. Витрати/додатки прийдуть у відповіді майстра (craft_result).
-        </div>
-        <div class="hr"></div>
+  <div class="card">
+    <div style="font-weight:800; font-size:16px;">Котел</div>
+    <div class="muted" style="font-size:12px; margin-top:4px;">
+      Сутності підтягуються <b>з інвентаря</b>. Натисни слот на котлі → натисни матеріал нижче.
+    </div>
+    <div class="hr"></div>
 
-        
-        <div class="grid three">
-          <div>
-            <label class="muted" style="font-size:12px;">Сутність (тип)</label>
-            <select class="input" id="cr-ess">
-              <option value="">(обери сутність)</option>
-              <option>Aether</option><option>Ignis</option><option>Mortis</option><option>Solidus</option><option>Vitalis</option>
-            </select>
-            <div class="muted" style="font-size:12px; margin-top:6px;">
-              Доступно в інвентарі: <span class="mono" id="cr-avail">0</span>
-            </div>
-          </div>
-          
-          <div>
-            <label class="muted" style="font-size:12px;">Рідкість</label>
-            <select class="input" id="cr-rarity">
-              <option>Common</option>
-              <option>Uncommon</option>
-              <option>Rare</option>
-              <option>Very Rare</option>
-              <option>Legendary</option>
-            </select>
-          </div>
-<div>
-            <label class="muted" style="font-size:12px;">К-сть</label>
-            <input class="input" id="cr-qty" type="number" min="1" value="1" />
-            <div class="muted" style="font-size:12px; margin-top:6px;">
-              Порада: кількість перевіряється по інвентарю.
-            </div>
-          </div>
-        </div>
-
-        <div class="row" style="margin-top:10px;">
-          <button class="btn small ok" id="btn-add-req">Додати</button>
-          <div class="spacer"></div>
-          <button class="btn small danger" id="btn-clear-req">Очистити</button>
+    <div class="cauldron-wrap">
+      <div class="cauldron" id="cauldron">
+        <div class="cslot" data-slot="0" aria-label="Слот 1"></button>
+        <div class="cslot" data-slot="1" aria-label="Слот 2"></button>
+        <div class="cslot" data-slot="2" aria-label="Слот 3"></button>
+        <div class="cslot" data-slot="3" aria-label="Слот 4"></div>
+        <div class="pot" aria-hidden="true">
+          <div class="pot-rim"></div>
+          <div class="pot-body"></div>
+          <div class="pot-glow"></div>
         </div>
       </div>
+    </div>
 
-      <div class="card">
-        <div class="row">
-          <div style="font-weight:800;">Інгредієнти в запиті</div>
-          <div class="spacer"></div>
-          <span class="tag" id="req-count">0 позицій</span>
-        </div>
-        <div class="hr"></div>
-        <div class="list" id="req-list"></div>
-        <div class="hr"></div>
+    <div class="muted" style="font-size:12px; margin-top:6px;">
+      Склад котла: <span id="ca-summary" class="mono"></span>
+    </div>
 
-        <div class="row">
-          <button class="btn primary" id="btn-make-req">Згенерувати код запиту</button>
-          <button class="btn" id="btn-copy-req">Скопіювати</button>
-          <button class="btn" id="btn-share-req">Поділитись</button>
-        </div>
-        <div style="margin-top:10px;">
-          <textarea id="req-code" placeholder="Тут зʼявиться код запиту…"></textarea>
-        </div>
+    <div class="row" style="margin-top:12px; gap:10px;">
+      <button class="btn small" id="btn-clear-slots">Очистити</button>
+      <div class="spacer"></div>
+      <button class="btn small ok" id="btn-make-req">Згенерувати NXREQ</button>
+    </div>
 
-        <div class="muted" style="font-size:12px; margin-top:10px;">
-          Формат: <span class="mono">NXREQ|…</span> (не підписаний — майстер приймає як “заявку”).
-        </div>
-      </div>
-    </section>
+    <div class="hr"></div>
+    <label class="muted" style="font-size:12px;">Код запиту (NXREQ)</label>
+    <textarea class="input mono" id="req-code" rows="3" placeholder="Тут зʼявиться код…" readonly></textarea>
+    <div class="row" style="margin-top:10px; gap:10px;">
+      <button class="btn small" id="btn-copy-req">Копіювати</button>
+      <button class="btn small" id="btn-share-req">Поділитись</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:800; font-size:16px;">Матеріали з інвентаря</div>
+    <div class="muted" style="font-size:12px; margin-top:4px;">
+      Показано лише те, що зараз є (з урахуванням рідкості).
+    </div>
+    <div class="hr"></div>
+    <div class="row">
+      <input class="input" id="craft-filter" placeholder="Пошук: сутність або рідкість" />
+    </div>
+  </div>
+  <div class="list" id="craft-inv-list"></div>
+</section>
 
     <section id="view-recipes" class="hidden">
       <div class="card">

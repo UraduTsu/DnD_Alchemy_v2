@@ -285,76 +285,249 @@ function reqQty(essence, rarity){
     .reduce((s,x)=>s+Number(x.qty||0),0);
 }
 
-function updateCraftAvail(){
-  const e = document.getElementById('cr-ess')?.value || '';
-  const r = document.getElementById('cr-rarity')?.value || 'Common';
-  const avail = invQty(e, r);
-  const used = reqQty(e, r);
-  const left = Math.max(0, avail - used);
-  const el = document.getElementById('cr-avail');
-  if(el) el.textContent = String(left);
+function rarityOrder(r){
+  const i = RARITIES.indexOf(r||'Common');
+  return i === -1 ? 999 : i;
 }
 
-let reqItems = [];
-function renderReqList(){
-  const list = document.getElementById('req-list');
-  list.innerHTML = '';
-  document.getElementById('req-count').textContent = `${reqItems.length} позицій`;
+let caSlots = Array.from({length:4}, ()=>({essence:'', rarity:'Common', qty:0}));
+let selectedSlot = 0;
 
-  if(reqItems.length === 0){
-    const d = document.createElement('div');
-    d.className = 'item muted';
-    d.textContent = 'Додай сутності в запит. Програма перевіряє, чи є вони в інвентарі.';
-    list.appendChild(d);
-    updateCraftAvail();
+function slotUsedQty(essence, rarity, skipIdx){
+  const e = (essence||'').toLowerCase();
+  const r = (rarity||'Common').toLowerCase();
+  return caSlots.reduce((s,sl,idx)=>{
+    if(idx===skipIdx) return s;
+    if(((sl.essence||'').toLowerCase()===e) && (((sl.rarity||'Common').toLowerCase())===r)){
+      return s + Number(sl.qty||0);
+    }
+    return s;
+  },0);
+}
+
+function aggregateSlots(){
+  const map = new Map(); // key -> qty
+  for(const sl of caSlots){
+    const e = (sl.essence||'').trim();
+    if(!e) continue;
+    const r = (sl.rarity||'Common').trim();
+    const q = Number(sl.qty||0);
+    if(!q) continue;
+    const key = (e.toLowerCase()+'|'+r.toLowerCase());
+    map.set(key, {essence:e, rarity:r, qty:(map.get(key)?.qty||0)+q});
+  }
+  return Array.from(map.values()).sort((a,b)=>{
+    if(a.essence!==b.essence) return a.essence.localeCompare(b.essence);
+    return rarityOrder(a.rarity) - rarityOrder(b.rarity);
+  });
+}
+
+function ensureSelectedSlot(){
+  if(selectedSlot == null || selectedSlot < 0 || selectedSlot >= caSlots.length){
+    selectedSlot = 0;
+  }
+}
+
+function pickSlotForAdd(){
+  // Prefer currently selected; otherwise first empty.
+  ensureSelectedSlot();
+  if(!caSlots[selectedSlot].essence) return selectedSlot;
+  const emptyIdx = caSlots.findIndex(s=>!s.essence);
+  return emptyIdx !== -1 ? emptyIdx : selectedSlot;
+}
+
+function canSetQty(idx, essence, rarity, newQty){
+  const avail = invQty(essence, rarity);
+  const usedElsewhere = slotUsedQty(essence, rarity, idx);
+  const left = Math.max(0, avail - usedElsewhere);
+  return newQty <= left;
+}
+
+function setSlot(idx, essence, rarity, qty){
+  caSlots[idx] = { essence, rarity: rarity||'Common', qty: Math.max(0, Number(qty||0)) };
+}
+
+function clearSlot(idx){
+  caSlots[idx] = { essence:'', rarity:'Common', qty:0 };
+}
+
+function clearAllSlots(){
+  caSlots = Array.from({length:4}, ()=>({essence:'', rarity:'Common', qty:0}));
+  selectedSlot = 0;
+  renderReqList();
+}
+
+function addFromInventory(essence, rarity){
+  const idx = pickSlotForAdd();
+  const cur = caSlots[idx];
+  const e = essence;
+  const r = rarity||'Common';
+
+  // If same essence+rarity, try increment
+  if(cur.essence === e && (cur.rarity||'Common') === r){
+    const nextQty = Number(cur.qty||0) + 1;
+    if(!canSetQty(idx, e, r, nextQty)){
+      toast('Недостатньо матеріалів (для цієї рідкості)');
+      return;
+    }
+    setSlot(idx, e, r, nextQty);
+    renderReqList();
     return;
   }
 
-  const sorted = [...reqItems].sort((a,b)=>{
-    const ea = (a.essence||''); const eb=(b.essence||'');
-    if(ea!==eb) return ea.localeCompare(eb);
-    return (a.rarity||'Common').localeCompare(b.rarity||'Common');
+  // Replace slot with 1 (or max possible if 1 not possible)
+  if(!canSetQty(idx, e, r, 1)){
+    toast('Недостатньо матеріалів (для цієї рідкості)');
+    return;
+  }
+  setSlot(idx, e, r, 1);
+  selectedSlot = idx;
+  renderReqList();
+}
+
+function adjustSlotQty(idx, delta){
+  const sl = caSlots[idx];
+  if(!sl.essence){
+    toast('Слот порожній');
+    return;
+  }
+  const nextQty = Math.max(0, Number(sl.qty||0) + delta);
+  if(nextQty === 0){
+    clearSlot(idx);
+    renderReqList();
+    return;
+  }
+  if(!canSetQty(idx, sl.essence, sl.rarity||'Common', nextQty)){
+    toast('Недостатньо матеріалів (для цієї рідкості)');
+    return;
+  }
+  setSlot(idx, sl.essence, sl.rarity||'Common', nextQty);
+  renderReqList();
+}
+
+function renderCraftSlots(){
+  ensureSelectedSlot();
+  document.querySelectorAll('.cslot').forEach(el=>{
+    const idx = Number(el.dataset.slot||0);
+    const sl = caSlots[idx];
+    el.classList.toggle('selected', idx===selectedSlot);
+
+    if(!sl.essence){
+      el.innerHTML = `
+        <div class="left">
+          <div class="title">＋ Порожньо</div>
+          <div class="sub">Натисни, щоб вибрати</div>
+        </div>
+      `;
+      return;
+    }
+
+    const e = sl.essence;
+    const r = sl.rarity || 'Common';
+    const q = Number(sl.qty||0);
+
+    const avail = invQty(e, r);
+    const usedElsewhere = slotUsedQty(e, r, idx);
+    const leftForThis = Math.max(0, avail - usedElsewhere);
+
+    el.innerHTML = `
+      <div class="left">
+        <div class="title">${escapeHtml(essenceLabel(e))} <span class="badge">${escapeHtml(r)}</span></div>
+        <div class="sub">Доступно: ${escapeHtml(String(leftForThis))}</div>
+      </div>
+      <div class="qtyctl">
+        <button class="qbtn" data-act="dec" data-slot="${idx}" aria-label="Зменшити">−</button>
+        <div class="qty">×${escapeHtml(String(q))}</div>
+        <button class="qbtn" data-act="inc" data-slot="${idx}" aria-label="Збільшити">+</button>
+        <button class="rm" data-act="rm" data-slot="${idx}" aria-label="Очистити">×</button>
+      </div>
+    `;
   });
 
-  for(const it of sorted){
+  // Summary
+  const items = aggregateSlots();
+  const s = items.length
+    ? items.map(it => `${it.essence}(${it.rarity})×${it.qty}`).join(', ')
+    : '—';
+  const sumEl = document.getElementById('ca-summary');
+  if(sumEl) sumEl.textContent = s;
+}
+
+function renderCraftInventoryList(){
+  const list = document.getElementById('craft-inv-list');
+  if(!list) return;
+  list.innerHTML = '';
+
+  const filter = (document.getElementById('craft-filter')?.value || '').trim().toLowerCase();
+
+  const inv = (state.inventory||[])
+    .filter(x => Number(x.qty||0) > 0)
+    .filter(x => {
+      if(!filter) return true;
+      const e = (x.essence||'').toLowerCase();
+      const r = (x.rarity||'Common').toLowerCase();
+      return e.includes(filter) || r.includes(filter);
+    })
+    .sort((a,b)=>{
+      const ea=(a.essence||''); const eb=(b.essence||'');
+      if(ea!==eb) return ea.localeCompare(eb);
+      return rarityOrder(a.rarity||'Common') - rarityOrder(b.rarity||'Common');
+    });
+
+  if(inv.length === 0){
+    const empty = document.createElement('div');
+    empty.className = 'card muted';
+    empty.style.fontSize = '12px';
+    empty.textContent = filter ? 'Нічого не знайдено.' : 'Інвентар порожній. Матеріали приходять від майстра.';
+    list.appendChild(empty);
+    return;
+  }
+
+  for(const it of inv){
     const e = it.essence;
     const r = it.rarity || 'Common';
-    const q = Number(it.qty||0);
+    const avail = Number(it.qty||0);
+    const used = slotUsedQty(e, r, -1); // total used
+    const left = Math.max(0, avail - used);
 
     const row = document.createElement('div');
     row.className = 'item';
+    row.style.cursor = 'pointer';
+    row.dataset.essence = e;
+    row.dataset.rarity = r;
+
     row.innerHTML = `
       <div class="top">
-        <div style="flex:1;">
+        <div style="flex:1; min-width:0;">
           <div class="name">${escapeHtml(essenceLabel(e))} <span class="badge">${escapeHtml(r)}</span></div>
+          <div class="meta">В інвентарі: ${escapeHtml(String(avail))} • В котлі: ${escapeHtml(String(used))} • Доступно: ${escapeHtml(String(left))}</div>
         </div>
-        <div class="qty">${q}</div>
-      </div>
-      <div class="hr"></div>
-      <div class="row">
-        <button class="btn small danger">Видалити</button>
-        <div class="spacer"></div>
-        <div class="muted" style="font-size:12px;">Доступно: <span class="mono">${invQty(e,r)}</span></div>
+        <div class="qty mono">+1</div>
       </div>
     `;
-    row.querySelector('button').addEventListener('click', ()=>{
-      reqItems = reqItems.filter(x => !((x.essence||'')===e && (x.rarity||'Common')===r));
-      renderReqList();
+
+    row.addEventListener('pointerup', (ev)=>{
+      try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){}
+      if(left <= 0){
+        toast('Недостатньо матеріалів (для цієї рідкості)');
+        return;
+      }
+      addFromInventory(e, r);
+    }, {passive:false});
+
+    row.addEventListener('click', ()=>{
+      if(left <= 0){ toast('Недостатньо матеріалів (для цієї рідкості)'); return; }
+      addFromInventory(e, r);
     });
+
     list.appendChild(row);
   }
-  updateCraftAvail();
 }
 
-function essencesToText(essences){
-  if(!essences || typeof essences !== 'object') return '';
-  const entries = Object.entries(essences)
-    .filter(([k,v])=>k && Number(v||0) > 0)
-    .sort((a,b)=>a[0].localeCompare(b[0]));
-  return entries.map(([k,v])=>{
-    const n = Number(v||0);
-    return n > 1 ? `${k}×${n}` : k;
-  }).join(', ');
+function renderReqList(){
+  // Backward-compatible name: renders the Craft view (cauldron + inventory).
+  renderCraftSlots();
+  renderCraftInventoryList();
 }
 
 function renderRecipes(){
@@ -537,10 +710,6 @@ function wire(){
   document.getElementById('inv-filter').addEventListener('input', renderInventory);
   document.getElementById('rec-filter').addEventListener('input', renderRecipes);
 
-  document.getElementById('cr-ess').addEventListener('change', updateCraftAvail);
-  document.getElementById('cr-rarity').addEventListener('change', updateCraftAvail);
-  document.getElementById('cr-qty').addEventListener('input', updateCraftAvail);
-
   document.getElementById('btn-reset').addEventListener('click', ()=>{
     if(confirm('Скинути інвентар, рецепти та історію на цьому телефоні?')){
       localStorage.removeItem(STORAGE_KEY);
@@ -560,58 +729,64 @@ function wire(){
     }
   });
 
-  document.getElementById('btn-add-req').addEventListener('click', ()=>{
-    const essence = document.getElementById('cr-ess').value;
-    const rarity = document.getElementById('cr-rarity').value || 'Common';
-    const qty  = Math.max(1, Number(document.getElementById('cr-qty').value||1));
-    if(!essence){ toast('Обери сутність'); return; }
+  // Котел (крафт)
+  const ca = document.getElementById('cauldron');
+  if(ca){
+    const handler = (ev)=>{
+      const actEl = ev.target?.closest?.('[data-act]');
+      if(actEl){
+        try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){}
+        const act = actEl.dataset.act;
+        const idx = Number(actEl.dataset.slot||0);
+        if(act === 'inc') adjustSlotQty(idx, +1);
+        else if(act === 'dec') adjustSlotQty(idx, -1);
+        else if(act === 'rm'){ clearSlot(idx); renderReqList(); }
+        return;
+      }
+      const slotEl = ev.target?.closest?.('.cslot');
+      if(slotEl){
+        try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){}
+        selectedSlot = Number(slotEl.dataset.slot||0);
+        renderCraftSlots();
+      }
+    };
+    ca.addEventListener('pointerup', handler, {passive:false});
+    ca.addEventListener('touchend', handler, {passive:false});
+    ca.addEventListener('click', handler);
+  }
 
-    const avail = invQty(essence, rarity);
-    const already = reqQty(essence, rarity);
+  document.getElementById('craft-filter')?.addEventListener('input', ()=> renderCraftInventoryList());
 
-    const left = Math.max(0, avail - already);
-
-    if(qty > left){
-      toast(`Недостатньо матеріалів: доступно ${left}`);
-      return;
-    }
-
-    // Merge same (essence + rarity) into one row
-    const keyE = essence.toLowerCase();
-    const keyR = (rarity||'Common').toLowerCase();
-    const existing = reqItems.find(x => (x.essence||'').toLowerCase() === keyE && (x.rarity||'Common').toLowerCase() === keyR);
-    if(existing) existing.qty = Number(existing.qty||0) + qty;
-    else reqItems.push({essence, rarity, qty});
-
-    document.getElementById('cr-qty').value='1';
-    renderReqList();
-  });
-
-  document.getElementById('btn-clear-req').addEventListener('click', ()=>{
-    reqItems = [];
-    renderReqList();
+  document.getElementById('btn-clear-slots')?.addEventListener('click', ()=>{
+    clearAllSlots();
+    const rc = document.getElementById('req-code');
+    if(rc) rc.value = '';
+    toast('Котел очищено');
   });
 
   document.getElementById('btn-make-req').addEventListener('click', ()=>{
-    if(reqItems.length===0){ toast('Додай сутності'); return; }
-
-    // Validate against inventory (aggregate)
-    for(const it of reqItems){
-      const e = it.essence;
+    const items = aggregateSlots();
+    if(items.length === 0){
+      toast('Котел порожній');
+      return;
+    }
+    // Перевірка інвентаря (з урахуванням рідкостей)
+    for(const it of items){
       const need = Number(it.qty||0);
-      const have = invQty(e, it.rarity||'Common');
+      const have = invQty(it.essence, it.rarity||'Common');
       if(need > have){
-        toast(`Недостатньо ${e}: потрібно ${need}, є ${have}`);
+        toast(`Недостатньо ${it.essence} (${it.rarity}): потрібно ${need}, є ${have}`);
         return;
       }
     }
 
-    const payload = { v: 1, type: 'craft_request', pack_id: crypto.randomUUID(), issued_at: nowIso(), items: reqItems.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
+    const id = (crypto?.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+    const payload = { v: 2, type: 'craft_request', pack_id: id, issued_at: nowIso(), items: items.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
     document.getElementById('req-code').value = makeReqCode(payload);
     toast('Код згенеровано');
   });
 
-  document.getElementById('btn-copy-req').addEventListener('click', async()=>{
+document.getElementById('btn-copy-req').addEventListener('click', async()=>{
     const code = document.getElementById('req-code').value.trim();
     if(!code){ toast('Нема коду'); return; }
     try{ await navigator.clipboard.writeText(code); toast('Скопійовано'); }catch(_){ toast('Не вдалось скопіювати'); }
