@@ -8,6 +8,8 @@ const REQ_PREFIX  = "NXREQ|";
 
 const STORAGE_KEY = "nxa_player_state_v1";
 
+const RARITIES = ["Common","Uncommon","Rare","Very Rare","Legendary"];
+
 const ESS_META = {
   Vitalis: {ua:"Життя", emoji:"💚"},
   Mortis: {ua:"Смерть", emoji:"💀"},
@@ -19,7 +21,8 @@ const ESS_META = {
 
 function essenceLabel(e){
   const m = ESS_META[e];
-  if(m) return `${m.emoji} ${m.ua} (${e})`;
+  // Show only the essence code to avoid labels like "Магія(Aether)".
+  if(m && m.emoji) return `${m.emoji} ${e}`;
   return e || "—";
 }
 
@@ -111,41 +114,40 @@ function loadState(){
 function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 
 function normalizeInventory(inv){
+  // Normalize to {essence, rarity, qty} rows (rarity matters for checks).
   const map = {};
   for(const it of (inv||[])){
     if(!it) continue;
     const essence = (it.essence||'').toString().trim() || (it.name||'').toString().trim();
+    const rarity = (it.rarity||'Common').toString().trim() || 'Common';
     const qty = Number(it.qty||0);
     if(!essence || !Number.isFinite(qty) || qty===0) continue;
-    map[essence] = (map[essence]||0) + qty;
+    const k = `${essence}||${rarity}`.toLowerCase();
+    map[k] = { essence, rarity, qty: (map[k]?.qty||0) + qty };
   }
-  return Object.entries(map)
-    .filter(([,q])=>Number.isFinite(q) && q>0)
-    .map(([essence,qty])=>({essence, qty}));
+  return Object.values(map)
+    .filter(it => Number.isFinite(it.qty) && it.qty>0);
 }
 
 
-function invKey(it){ return `${(it.essence||'').toLowerCase()}`; }
+function invKey(it){ return `${(it.essence||'').toLowerCase()}||${(it.rarity||'Common').toLowerCase()}`; }`; }
 
 function addInventoryDelta(deltaItems){
-  // We track inventory only by essence type (players don't need names/rarities).
+  // Inventory is tracked by (essence + rarity).
+  const map = new Map(state.inventory.map(it => [invKey(it), {...it}]));
   for(const d of (deltaItems||[])) {
     if(!d) continue;
     const essence = ((d.essence||'') || (d.name||'')).toString().trim();
-    if(!essence) continue;
-    const qtyDelta = Number(d.qty_delta||0);
-    if(!Number.isFinite(qtyDelta) || qtyDelta===0) continue;
-
-    const key = essence.toLowerCase();
-    let item = state.inventory.find(x => ((x.essence||'').toLowerCase() === key));
-    if(!item){
-      item = {essence, qty: 0};
-      state.inventory.push(item);
-    }
-    item.qty = Math.max(0, Number(item.qty||0) + qtyDelta);
+    const rarity  = (d.rarity||'Common').toString().trim() || 'Common';
+    const qtyd = Number(d.qty_delta ?? d.qty ?? 0);
+    if(!essence || !Number.isFinite(qtyd) || qtyd===0) continue;
+    const key = `${essence.toLowerCase()}||${rarity.toLowerCase()}`;
+    const cur = map.get(key) || {essence, rarity, qty:0};
+    cur.qty = Number(cur.qty||0) + qtyd;
+    map.set(key, cur);
   }
-  state.inventory = state.inventory.filter(x => Number(x.qty||0) > 0);
-  saveState();
+  // Keep only positive qty
+  state.inventory = Array.from(map.values()).filter(it => Number(it.qty||0) > 0);
 }
 
 function upsertRecipe({recipe_id, title, visual, essences}){
@@ -210,13 +212,27 @@ function renderInventory(){
   const list = document.getElementById('inv-list');
   list.innerHTML = '';
 
-  const items = [...state.inventory].sort((a,b)=> (a.essence||'').localeCompare(b.essence||''));
-  const filtered = items.filter(it => {
-    const hay = `${it.essence}`.toLowerCase();
-    return !filter || hay.includes(filter);
+  // Group by essence -> rarity -> qty
+  const byEss = new Map();
+  for(const it of state.inventory){
+    const e = it.essence;
+    const r = it.rarity || 'Common';
+    const q = Number(it.qty||0);
+    if(!e || !Number.isFinite(q) || q<=0) continue;
+    if(!byEss.has(e)) byEss.set(e, {});
+    const obj = byEss.get(e);
+    obj[r] = (obj[r]||0) + q;
+  }
+
+  const essences = Array.from(byEss.keys()).sort((a,b)=>a.localeCompare(b));
+  const filteredEss = essences.filter(e=>{
+    if(!filter) return true;
+    const rar = byEss.get(e) || {};
+    const hay = `${e} ${Object.keys(rar).join(' ')}`.toLowerCase();
+    return hay.includes(filter);
   });
 
-  if(filtered.length === 0){
+  if(filteredEss.length === 0){
     const c = document.createElement('div');
     c.className = 'card muted';
     c.textContent = 'Поки що інвентар порожній. Попроси майстра видати матеріали кодом (loot).';
@@ -224,37 +240,54 @@ function renderInventory(){
     return;
   }
 
-  for(const it of filtered){
+  for(const e of filteredEss){
+    const rarMap = byEss.get(e) || {};
+    const total = Object.values(rarMap).reduce((s,v)=>s+Number(v||0),0);
+
+    const parts = [];
+    for(const r of RARITIES){
+      if(rarMap[r]) parts.push(`<span class="mono">${escapeHtml(r)}: ${Number(rarMap[r])}</span>`);
+    }
+    // also include unknown rarities if any
+    for(const r of Object.keys(rarMap)){
+      if(!RARITIES.includes(r)) parts.push(`<span class="mono">${escapeHtml(r)}: ${Number(rarMap[r])}</span>`);
+    }
+
     const el = document.createElement('div');
     el.className = 'item';
     el.innerHTML = `
       <div class="top">
         <div style="flex:1;">
-          <div class="name">${escapeHtml(essenceLabel(it.essence))}</div>
-          <div class="meta">${escapeHtml(it.essence || '—')}</div>
+          <div class="name">${escapeHtml(essenceLabel(e))}</div>
+          <div class="meta">${parts.join(' • ') || '<span class="muted">—</span>'}</div>
         </div>
-        <div class="qty">${Number(it.qty||0)}</div>
+        <div class="qty">${total}</div>
       </div>
     `;
     list.appendChild(el);
   }
 }
 
-function invQty(essence){
-  const key = (essence||'').toLowerCase();
-  const it = state.inventory.find(x => (x.essence||'').toLowerCase() === key);
+function invQty(essence, rarity){
+  const e = (essence||'').toLowerCase();
+  const r = (rarity||'Common').toLowerCase();
+  const it = state.inventory.find(x => (x.essence||'').toLowerCase() === e && (x.rarity||'Common').toLowerCase() === r);
   return Number(it?.qty||0);
 }
 
-function reqQty(essence){
-  const key = (essence||'').toLowerCase();
-  return reqItems.filter(x => (x.essence||'').toLowerCase() === key).reduce((s,x)=>s+Number(x.qty||0),0);
+function reqQty(essence, rarity){
+  const e = (essence||'').toLowerCase();
+  const r = (rarity||'Common').toLowerCase();
+  return reqItems
+    .filter(x => (x.essence||'').toLowerCase() === e && (x.rarity||'Common').toLowerCase() === r)
+    .reduce((s,x)=>s+Number(x.qty||0),0);
 }
 
 function updateCraftAvail(){
   const e = document.getElementById('cr-ess')?.value || '';
-  const avail = invQty(e);
-  const used = reqQty(e);
+  const r = document.getElementById('cr-rarity')?.value || 'Common';
+  const avail = invQty(e, r);
+  const used = reqQty(e, r);
   const left = Math.max(0, avail - used);
   const el = document.getElementById('cr-avail');
   if(el) el.textContent = String(left);
@@ -269,31 +302,45 @@ function renderReqList(){
   if(reqItems.length === 0){
     const d = document.createElement('div');
     d.className = 'item muted';
-    d.textContent = 'Додай хоча б 1 сутність.';
+    d.textContent = 'Додай сутності в запит. Програма перевіряє, чи є вони в інвентарі.';
     list.appendChild(d);
     updateCraftAvail();
     return;
   }
 
-  reqItems.forEach((it, idx)=>{
-    const el = document.createElement('div');
-    el.className = 'item';
-    el.innerHTML = `
-      <div class="top">
-        <div style="flex:1;">
-          <div class="name">${escapeHtml(essenceLabel(it.essence))} <span class="tag">x${Number(it.qty||0)}</span></div>
-          <div class="meta">${escapeHtml(it.essence || '—')}</div>
-        </div>
-        <button class="btn small danger" data-del="${idx}">✕</button>
-      </div>
-    `;
-    el.querySelector('button').addEventListener('click', ()=>{
-      reqItems.splice(idx,1);
-      renderReqList();
-    });
-    list.appendChild(el);
+  const sorted = [...reqItems].sort((a,b)=>{
+    const ea = (a.essence||''); const eb=(b.essence||'');
+    if(ea!==eb) return ea.localeCompare(eb);
+    return (a.rarity||'Common').localeCompare(b.rarity||'Common');
   });
 
+  for(const it of sorted){
+    const e = it.essence;
+    const r = it.rarity || 'Common';
+    const q = Number(it.qty||0);
+
+    const row = document.createElement('div');
+    row.className = 'item';
+    row.innerHTML = `
+      <div class="top">
+        <div style="flex:1;">
+          <div class="name">${escapeHtml(essenceLabel(e))} <span class="badge">${escapeHtml(r)}</span></div>
+        </div>
+        <div class="qty">${q}</div>
+      </div>
+      <div class="hr"></div>
+      <div class="row">
+        <button class="btn small danger">Видалити</button>
+        <div class="spacer"></div>
+        <div class="muted" style="font-size:12px;">Доступно: <span class="mono">${invQty(e,r)}</span></div>
+      </div>
+    `;
+    row.querySelector('button').addEventListener('click', ()=>{
+      reqItems = reqItems.filter(x => !((x.essence||'')===e && (x.rarity||'Common')===r));
+      renderReqList();
+    });
+    list.appendChild(row);
+  }
   updateCraftAvail();
 }
 
@@ -477,6 +524,7 @@ function wire(){
   document.getElementById('rec-filter').addEventListener('input', renderRecipes);
 
   document.getElementById('cr-ess').addEventListener('change', updateCraftAvail);
+  document.getElementById('cr-rarity').addEventListener('change', updateCraftAvail);
   document.getElementById('cr-qty').addEventListener('input', updateCraftAvail);
 
   document.getElementById('btn-reset').addEventListener('click', ()=>{
@@ -500,11 +548,13 @@ function wire(){
 
   document.getElementById('btn-add-req').addEventListener('click', ()=>{
     const essence = document.getElementById('cr-ess').value;
+    const rarity = document.getElementById('cr-rarity').value || 'Common';
     const qty  = Math.max(1, Number(document.getElementById('cr-qty').value||1));
     if(!essence){ toast('Обери сутність'); return; }
 
-    const avail = invQty(essence);
-    const already = reqQty(essence);
+    const avail = invQty(essence, rarity);
+    const already = reqQty(essence, rarity);
+
     const left = Math.max(0, avail - already);
 
     if(qty > left){
@@ -512,11 +562,12 @@ function wire(){
       return;
     }
 
-    // Merge same essence into one row
-    const key = essence.toLowerCase();
-    const existing = reqItems.find(x => (x.essence||'').toLowerCase() === key);
+    // Merge same (essence + rarity) into one row
+    const keyE = essence.toLowerCase();
+    const keyR = (rarity||'Common').toLowerCase();
+    const existing = reqItems.find(x => (x.essence||'').toLowerCase() === keyE && (x.rarity||'Common').toLowerCase() === keyR);
     if(existing) existing.qty = Number(existing.qty||0) + qty;
-    else reqItems.push({essence, qty});
+    else reqItems.push({essence, rarity, qty});
 
     document.getElementById('cr-qty').value='1';
     renderReqList();
@@ -534,14 +585,14 @@ function wire(){
     for(const it of reqItems){
       const e = it.essence;
       const need = Number(it.qty||0);
-      const have = invQty(e);
+      const have = invQty(e, it.rarity||'Common');
       if(need > have){
         toast(`Недостатньо ${e}: потрібно ${need}, є ${have}`);
         return;
       }
     }
 
-    const payload = { v: 1, type: 'craft_request', pack_id: crypto.randomUUID(), issued_at: nowIso(), items: reqItems };
+    const payload = { v: 1, type: 'craft_request', pack_id: crypto.randomUUID(), issued_at: nowIso(), items: reqItems.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
     document.getElementById('req-code').value = makeReqCode(payload);
     toast('Код згенеровано');
   });
