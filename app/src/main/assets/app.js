@@ -19,6 +19,24 @@ const ESS_META = {
   Rift: {ua:"Розрив", emoji:"🕳️"},
 };
 
+// DM-like colors
+const ESS_COLOR = {
+  Vitalis: {r:80, g:220, b:150},
+  Mortis:  {r:210,g:80,  b:90},
+  Ignis:   {r:255,g:140, b:60},
+  Solidus: {r:110,g:170, b:255},
+  Aether:  {r:190,g:120, b:255},
+  Rift:    {r:70, g:70,  b:90},
+};
+
+const RARITY_COLOR = {
+  "Common":    {r:150,g:150,b:150},
+  "Uncommon":  {r:80, g:200,b:120},
+  "Rare":      {r:80, g:140,b:255},
+  "Very Rare": {r:170,g:90, b:255},
+  "Legendary": {r:255,g:140,b:0},
+};
+
 function essenceLabel(e){
   const m = ESS_META[e];
   // Show only the essence code to avoid labels like "Магія(Aether)".
@@ -209,6 +227,122 @@ function escapeHtml(str){
 
 function normalizeText(s){ return (s||'').toLowerCase(); }
 
+// -----------------------------
+// DM-like cauldron animation (canvas)
+// -----------------------------
+class CauldronAnimator{
+  constructor(canvas){
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.angle = 0;
+    this.essences = [];
+    this.base = {r:40,g:30,b:60};
+    this._dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+    this._raf = null;
+    this._size = 320;
+
+    window.addEventListener('resize', ()=>this.resize(), {passive:true});
+    this.resize();
+    this._loop();
+  }
+
+  setEssences(ess){
+    this.essences = Array.isArray(ess) ? ess.filter(Boolean) : [];
+    const cols = this.essences.map(e => ESS_COLOR[e]).filter(Boolean);
+    if(cols.length){
+      const r = Math.round(cols.reduce((s,c)=>s+c.r,0) / cols.length);
+      const g = Math.round(cols.reduce((s,c)=>s+c.g,0) / cols.length);
+      const b = Math.round(cols.reduce((s,c)=>s+c.b,0) / cols.length);
+      this.base = {r,g,b};
+    } else {
+      this.base = {r:40,g:30,b:60};
+    }
+  }
+
+  resize(){
+    try{
+      const rect = this.canvas.getBoundingClientRect();
+      const side = Math.max(240, Math.floor(Math.min(rect.width || 0, rect.height || 0) || (rect.width || 320) || 320));
+      this._size = side;
+      this._dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+      this.canvas.width = side * this._dpr;
+      this.canvas.height = side * this._dpr;
+    }catch(_){
+      // ignore
+    }
+  }
+
+  _loop(){
+    this.angle = (this.angle + 1.3) % 360;
+    this.draw();
+    this._raf = requestAnimationFrame(()=>this._loop());
+  }
+
+  draw(){
+    const ctx = this.ctx;
+    if(!ctx) return;
+    const w = this.canvas.width, h = this.canvas.height;
+    const cx = w/2, cy = h/2;
+    const r = Math.min(w,h) * 0.42;
+
+    ctx.save();
+    ctx.scale(1,1);
+    ctx.clearRect(0,0,w,h);
+    ctx.translate(0,0);
+
+    // background ring
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(20,16,28,1)';
+    ctx.arc(cx, cy, r+10*this._dpr, 0, Math.PI*2);
+    ctx.fill();
+    ctx.lineWidth = 6*this._dpr;
+    ctx.strokeStyle = 'rgba(90,80,120,0.35)';
+    ctx.stroke();
+
+    // liquid
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(${this.base.r},${this.base.g},${this.base.b},0.70)`;
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.fill();
+
+    // swirl arcs
+    const start = (this.angle*Math.PI/180);
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(240,240,255,0.28)';
+    ctx.lineWidth = 10*this._dpr;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r*0.70, start, start + (220*Math.PI/180));
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(240,240,255,0.18)';
+    ctx.lineWidth = 6*this._dpr;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r*0.52, start + (120*Math.PI/180), start + (120*Math.PI/180) + (240*Math.PI/180));
+    ctx.stroke();
+
+    // sparkles
+    for(let i=0;i<6;i++){
+      const a = (this.angle + i*60) * Math.PI/180;
+      const wob = Math.sin((this.angle+i*20)*Math.PI/180) * 6 * this._dpr;
+      const sx = cx + Math.cos(a) * r*0.86 + wob;
+      const sy = cy + Math.sin(a) * r*0.62 - wob*0.4;
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.arc(sx, sy, 4*this._dpr, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // rim glow
+    ctx.beginPath();
+    ctx.strokeStyle = `rgba(${this.base.r},${this.base.g},${this.base.b},0.27)`;
+    ctx.lineWidth = 10*this._dpr;
+    ctx.arc(cx, cy, r + 6*this._dpr, 0, Math.PI*2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
 function renderInventory(){
   const filter = normalizeText(document.getElementById('inv-filter').value);
   const list = document.getElementById('inv-list');
@@ -285,260 +419,238 @@ function reqQty(essence, rarity){
     .reduce((s,x)=>s+Number(x.qty||0),0);
 }
 
-function rarityOrder(r){
-  const i = RARITIES.indexOf(r||'Common');
-  return i === -1 ? 999 : i;
+// -----------------------------
+// Craft UI: cauldron slots are the single source of truth.
+// reqItems is derived (grouped) from slots.
+// -----------------------------
+let cauldronSlots = Array(5).fill(null); // [{essence, rarity}] | null
+let reqItems = [];
+let _lastCraftSig = '';
+
+function craftSigFromSlots(){
+  return cauldronSlots.map(s => s ? `${s.essence}||${s.rarity}` : '-').join('|');
 }
 
-let caSlots = Array.from({length:4}, ()=>({essence:'', rarity:'Common', qty:0}));
-let selectedSlot = 0;
+function cauldronIsFull(){ return cauldronSlots.every(Boolean); }
 
-function slotUsedQty(essence, rarity, skipIdx){
-  const e = (essence||'').toLowerCase();
-  const r = (rarity||'Common').toLowerCase();
-  return caSlots.reduce((s,sl,idx)=>{
-    if(idx===skipIdx) return s;
-    if(((sl.essence||'').toLowerCase()===e) && (((sl.rarity||'Common').toLowerCase())===r)){
-      return s + Number(sl.qty||0);
-    }
-    return s;
-  },0);
-}
-
-function aggregateSlots(){
-  const map = new Map(); // key -> qty
-  for(const sl of caSlots){
-    const e = (sl.essence||'').trim();
-    if(!e) continue;
-    const r = (sl.rarity||'Common').trim();
-    const q = Number(sl.qty||0);
-    if(!q) continue;
-    const key = (e.toLowerCase()+'|'+r.toLowerCase());
-    map.set(key, {essence:e, rarity:r, qty:(map.get(key)?.qty||0)+q});
+function syncReqFromSlots(){
+  const map = new Map();
+  for(const s of cauldronSlots){
+    if(!s) continue;
+    const k = `${(s.essence||'').toLowerCase()}||${(s.rarity||'Common').toLowerCase()}`;
+    const cur = map.get(k) || {essence:s.essence, rarity:(s.rarity||'Common'), qty:0};
+    cur.qty += 1;
+    map.set(k, cur);
   }
-  return Array.from(map.values()).sort((a,b)=>{
-    if(a.essence!==b.essence) return a.essence.localeCompare(b.essence);
-    return rarityOrder(a.rarity) - rarityOrder(b.rarity);
-  });
+  reqItems = Array.from(map.values()).filter(x => Number(x.qty||0) > 0);
 }
 
-function ensureSelectedSlot(){
-  if(selectedSlot == null || selectedSlot < 0 || selectedSlot >= caSlots.length){
-    selectedSlot = 0;
-  }
+function addToCauldron(essence, rarity){
+  essence = (essence||'').toString().trim();
+  rarity = (rarity||'Common').toString().trim() || 'Common';
+  if(!essence){ toast('Нема сутності'); return; }
 
-function fixCauldronHeight(){
-  const el = document.querySelector('.cauldron');
-  if(!el) return;
-  // Some Android WebViews ignore CSS min()/aspect-ratio and the cauldron collapses to height=0.
-  // Force height based on computed width to keep absolute-positioned slots inside.
-  const w = el.getBoundingClientRect().width || el.clientWidth || 0;
-  if(w > 0){
-    el.style.height = `${Math.round(w)}px`;
-  }
-}
-}
-
-function pickSlotForAdd(){
-  // Prefer currently selected; otherwise first empty.
-  ensureSelectedSlot();
-  if(!caSlots[selectedSlot].essence) return selectedSlot;
-  const emptyIdx = caSlots.findIndex(s=>!s.essence);
-  return emptyIdx !== -1 ? emptyIdx : selectedSlot;
-}
-
-function canSetQty(idx, essence, rarity, newQty){
+  syncReqFromSlots();
   const avail = invQty(essence, rarity);
-  const usedElsewhere = slotUsedQty(essence, rarity, idx);
-  const left = Math.max(0, avail - usedElsewhere);
-  return newQty <= left;
-}
-
-function setSlot(idx, essence, rarity, qty){
-  caSlots[idx] = { essence, rarity: rarity||'Common', qty: Math.max(0, Number(qty||0)) };
+  const used = reqQty(essence, rarity);
+  const left = Math.max(0, avail - used);
+  if(left <= 0){ toast('Недостатньо матеріалів'); return; }
+  const idx = cauldronSlots.findIndex(x => !x);
+  if(idx < 0){ toast('Котел заповнений (макс. 5)'); return; }
+  cauldronSlots[idx] = {essence, rarity};
+  renderCraftUI();
 }
 
 function clearSlot(idx){
-  caSlots[idx] = { essence:'', rarity:'Common', qty:0 };
+  if(idx < 0 || idx >= cauldronSlots.length) return;
+  cauldronSlots[idx] = null;
+  renderCraftUI();
 }
 
-function clearAllSlots(){
-  caSlots = Array.from({length:4}, ()=>({essence:'', rarity:'Common', qty:0}));
-  selectedSlot = 0;
-  renderReqList();
+function clearCauldron(){
+  cauldronSlots = Array(5).fill(null);
+  renderCraftUI();
 }
 
-function addFromInventory(essence, rarity){
-  const idx = pickSlotForAdd();
-  const cur = caSlots[idx];
-  const e = essence;
-  const r = rarity||'Common';
+function removeFromCauldronByKey(essence, rarity){
+  const e = (essence||'').toLowerCase();
+  const r = (rarity||'Common').toLowerCase();
+  cauldronSlots = cauldronSlots.map(s => {
+    if(!s) return null;
+    if((s.essence||'').toLowerCase() === e && (s.rarity||'Common').toLowerCase() === r) return null;
+    return s;
+  });
+  renderCraftUI();
+}
 
-  // If same essence+rarity, try increment
-  if(cur.essence === e && (cur.rarity||'Common') === r){
-    const nextQty = Number(cur.qty||0) + 1;
-    if(!canSetQty(idx, e, r, nextQty)){
-      toast('Недостатньо матеріалів (для цієї рідкості)');
-      return;
+function renderCauldronSlots(){
+  const host = document.getElementById('cauldron-slots');
+  if(!host) return;
+  host.innerHTML = '';
+
+  for(let i=0;i<cauldronSlots.length;i++){
+    const s = cauldronSlots[i];
+    const el = document.createElement('div');
+    el.className = 'slot' + (s ? ' filled' : '');
+    if(s){
+      const c = RARITY_COLOR[s.rarity] || RARITY_COLOR['Common'];
+      el.style.borderColor = `rgba(${c.r},${c.g},${c.b},0.95)`;
+      el.style.boxShadow = `0 0 0 1px rgba(${c.r},${c.g},${c.b},0.15), 0 8px 20px rgba(0,0,0,0.22)`;
     }
-    setSlot(idx, e, r, nextQty);
-    renderReqList();
-    return;
-  }
 
-  // Replace slot with 1 (or max possible if 1 not possible)
-  if(!canSetQty(idx, e, r, 1)){
-    toast('Недостатньо матеріалів (для цієї рідкості)');
-    return;
-  }
-  setSlot(idx, e, r, 1);
-  selectedSlot = idx;
-  renderReqList();
-}
-
-function adjustSlotQty(idx, delta){
-  const sl = caSlots[idx];
-  if(!sl.essence){
-    toast('Слот порожній');
-    return;
-  }
-  const nextQty = Math.max(0, Number(sl.qty||0) + delta);
-  if(nextQty === 0){
-    clearSlot(idx);
-    renderReqList();
-    return;
-  }
-  if(!canSetQty(idx, sl.essence, sl.rarity||'Common', nextQty)){
-    toast('Недостатньо матеріалів (для цієї рідкості)');
-    return;
-  }
-  setSlot(idx, sl.essence, sl.rarity||'Common', nextQty);
-  renderReqList();
-}
-
-function renderCraftSlots(){
-  ensureSelectedSlot();
-  document.querySelectorAll('.cslot').forEach(el=>{
-    const idx = Number(el.dataset.slot||0);
-    const sl = caSlots[idx];
-    el.classList.toggle('selected', idx===selectedSlot);
-
-    if(!sl.essence){
-      el.innerHTML = `
-        <div class="left">
-          <div class="title">＋ Порожньо</div>
-          <div class="sub">Натисни, щоб вибрати</div>
-        </div>
+    const label = document.createElement('div');
+    label.className = 'slot-label';
+    if(!s){
+      label.innerHTML = `
+        <div class="slot-title muted">Слот ${i+1}</div>
+        <div class="slot-sub">Торкнись інгредієнта нижче, щоб додати</div>
       `;
-      return;
+    } else {
+      label.innerHTML = `
+        <div class="slot-title">${escapeHtml(essenceLabel(s.essence))} <span class="badge">${escapeHtml(s.rarity||'Common')}</span></div>
+        <div class="slot-sub">Доступно в інвентарі: <span class="mono">${invQty(s.essence, s.rarity||'Common')}</span></div>
+      `;
     }
+    el.appendChild(label);
 
-    const e = sl.essence;
-    const r = sl.rarity || 'Common';
-    const q = Number(sl.qty||0);
+    const btn = document.createElement('button');
+    btn.className = 'slot-x';
+    btn.textContent = '✕';
+    btn.disabled = !s;
+    btn.style.opacity = s ? '1' : '0.35';
+    btn.addEventListener('click', ()=>clearSlot(i));
+    el.appendChild(btn);
 
-    const avail = invQty(e, r);
-    const usedElsewhere = slotUsedQty(e, r, idx);
-    const leftForThis = Math.max(0, avail - usedElsewhere);
+    host.appendChild(el);
+  }
+}
 
-    el.innerHTML = `
-      <div class="left">
-        <div class="title">${escapeHtml(essenceLabel(e))} <span class="badge">${escapeHtml(r)}</span></div>
-        <div class="sub">Доступно: ${escapeHtml(String(leftForThis))}</div>
-      </div>
-      <div class="qtyctl">
-        <button class="qbtn" data-act="dec" data-slot="${idx}" aria-label="Зменшити">−</button>
-        <div class="qty">×${escapeHtml(String(q))}</div>
-        <button class="qbtn" data-act="inc" data-slot="${idx}" aria-label="Збільшити">+</button>
-        <button class="rm" data-act="rm" data-slot="${idx}" aria-label="Очистити">×</button>
-      </div>
-    `;
+function renderCraftInvPicker(){
+  const host = document.getElementById('craft-inv-list');
+  const meta = document.getElementById('craft-inv-meta');
+  if(!host) return;
+  host.innerHTML = '';
+
+  syncReqFromSlots();
+  const inv = [...(state.inventory||[])].sort((a,b)=>{
+    const ea = (a.essence||''); const eb=(b.essence||'');
+    if(ea!==eb) return ea.localeCompare(eb);
+    return (a.rarity||'Common').localeCompare(b.rarity||'Common');
   });
 
-  // Summary
-  const items = aggregateSlots();
-  const s = items.length
-    ? items.map(it => `${it.essence}(${it.rarity})×${it.qty}`).join(', ')
-    : '—';
-  const sumEl = document.getElementById('ca-summary');
-  if(sumEl) sumEl.textContent = s;
-}
-
-function renderCraftInventoryList(){
-  const list = document.getElementById('craft-inv-list');
-  if(!list) return;
-  list.innerHTML = '';
-
-  const filter = (document.getElementById('craft-filter')?.value || '').trim().toLowerCase();
-
-  const inv = (state.inventory||[])
-    .filter(x => Number(x.qty||0) > 0)
-    .filter(x => {
-      if(!filter) return true;
-      const e = (x.essence||'').toLowerCase();
-      const r = (x.rarity||'Common').toLowerCase();
-      return e.includes(filter) || r.includes(filter);
-    })
-    .sort((a,b)=>{
-      const ea=(a.essence||''); const eb=(b.essence||'');
-      if(ea!==eb) return ea.localeCompare(eb);
-      return rarityOrder(a.rarity||'Common') - rarityOrder(b.rarity||'Common');
-    });
+  const totalHave = inv.reduce((s,x)=>s+Number(x.qty||0),0);
+  const totalUsed = reqItems.reduce((s,x)=>s+Number(x.qty||0),0);
+  if(meta) meta.textContent = `${totalUsed}/5 у котлі • ${totalHave} всього`;
 
   if(inv.length === 0){
-    const empty = document.createElement('div');
-    empty.className = 'card muted';
-    empty.style.fontSize = '12px';
-    empty.textContent = filter ? 'Нічого не знайдено.' : 'Інвентар порожній. Матеріали приходять від майстра.';
-    list.appendChild(empty);
+    const d = document.createElement('div');
+    d.className = 'item muted';
+    d.textContent = 'Інвентар порожній. Попроси майстра видати матеріали кодом (loot).';
+    host.appendChild(d);
     return;
   }
 
   for(const it of inv){
     const e = it.essence;
     const r = it.rarity || 'Common';
-    const avail = Number(it.qty||0);
-    const used = slotUsedQty(e, r, -1); // total used
-    const left = Math.max(0, avail - used);
+    const have = Number(it.qty||0);
+    const used = reqQty(e, r);
+    const left = Math.max(0, have - used);
 
     const row = document.createElement('div');
     row.className = 'item';
-    row.style.cursor = 'pointer';
-    row.dataset.essence = e;
-    row.dataset.rarity = r;
-
     row.innerHTML = `
       <div class="top">
         <div style="flex:1; min-width:0;">
           <div class="name">${escapeHtml(essenceLabel(e))} <span class="badge">${escapeHtml(r)}</span></div>
-          <div class="meta">В інвентарі: ${escapeHtml(String(avail))} • В котлі: ${escapeHtml(String(used))} • Доступно: ${escapeHtml(String(left))}</div>
+          <div class="meta">Залишилось для запиту: <span class="mono">${left}</span> • В інвентарі: <span class="mono">${have}</span></div>
         </div>
-        <div class="qty mono">+1</div>
+        <button class="btn small ok" ${left<=0 || cauldronIsFull() ? 'disabled' : ''}>Додати</button>
       </div>
     `;
+    const btn = row.querySelector('button');
+    btn.addEventListener('click', ()=>addToCauldron(e, r));
+    host.appendChild(row);
+  }
+}
 
-    row.addEventListener('pointerup', (ev)=>{
-      try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){}
-      if(left <= 0){
-        toast('Недостатньо матеріалів (для цієї рідкості)');
-        return;
-      }
-      addFromInventory(e, r);
-    }, {passive:false});
+let cauldronAnim = null;
+function updateCauldronAnim(){
+  if(!cauldronAnim) return;
+  const ess = cauldronSlots.filter(Boolean).map(s => s.essence);
+  cauldronAnim.setEssences(ess);
+}
 
-    row.addEventListener('click', ()=>{
-      if(left <= 0){ toast('Недостатньо матеріалів (для цієї рідкості)'); return; }
-      addFromInventory(e, r);
+function renderCraftUI(){
+  syncReqFromSlots();
+  const sig = craftSigFromSlots();
+  if(sig !== _lastCraftSig){
+    _lastCraftSig = sig;
+    const code = document.getElementById('req-code');
+    if(code) code.value = '';
+  }
+  renderCauldronSlots();
+  renderCraftInvPicker();
+  renderReqList();
+  updateCauldronAnim();
+}
+
+function renderReqList(){
+  const list = document.getElementById('req-list');
+  list.innerHTML = '';
+  document.getElementById('req-count').textContent = `${reqItems.length} позицій`;
+
+  if(reqItems.length === 0){
+    const d = document.createElement('div');
+    d.className = 'item muted';
+    d.textContent = 'Додай інгредієнти у котел (слоти) — запит сформується автоматично.';
+    list.appendChild(d);
+    return;
+  }
+
+  const sorted = [...reqItems].sort((a,b)=>{
+    const ea = (a.essence||''); const eb=(b.essence||'');
+    if(ea!==eb) return ea.localeCompare(eb);
+    return (a.rarity||'Common').localeCompare(b.rarity||'Common');
+  });
+
+  for(const it of sorted){
+    const e = it.essence;
+    const r = it.rarity || 'Common';
+    const q = Number(it.qty||0);
+
+    const row = document.createElement('div');
+    row.className = 'item';
+    row.innerHTML = `
+      <div class="top">
+        <div style="flex:1;">
+          <div class="name">${escapeHtml(essenceLabel(e))} <span class="badge">${escapeHtml(r)}</span></div>
+        </div>
+        <div class="qty">${q}</div>
+      </div>
+      <div class="hr"></div>
+      <div class="row">
+        <button class="btn small danger">Видалити</button>
+        <div class="spacer"></div>
+        <div class="muted" style="font-size:12px;">Доступно: <span class="mono">${invQty(e,r)}</span></div>
+      </div>
+    `;
+    row.querySelector('button').addEventListener('click', ()=>{
+      removeFromCauldronByKey(e, r);
     });
-
     list.appendChild(row);
   }
 }
 
-function renderReqList(){
-  // Backward-compatible name: renders the Craft view (cauldron + inventory).
-  renderCraftSlots();
-  renderCraftInventoryList();
+function essencesToText(essences){
+  if(!essences || typeof essences !== 'object') return '';
+  const entries = Object.entries(essences)
+    .filter(([k,v])=>k && Number(v||0) > 0)
+    .sort((a,b)=>a[0].localeCompare(b[0]));
+  return entries.map(([k,v])=>{
+    const n = Number(v||0);
+    return n > 1 ? `${k}×${n}` : k;
+  }).join(', ');
 }
 
 function renderRecipes(){
@@ -694,7 +806,7 @@ function setTab(tab){
   document.getElementById(map[tab]).classList.remove('hidden');
   localStorage.setItem('nxa_ui_tab', tab);
   if(tab==='inv') renderInventory();
-  if(tab==='craft'){ renderReqList(); fixCauldronHeight(); }
+  if(tab==='craft') renderCraftUI();
   if(tab==='recipes') renderRecipes();
   if(tab==='import') renderHistory();
 }
@@ -721,12 +833,22 @@ function wire(){
   document.getElementById('inv-filter').addEventListener('input', renderInventory);
   document.getElementById('rec-filter').addEventListener('input', renderRecipes);
 
+  // Cauldron (DM-like)
+  try{
+    const c = document.getElementById('cauldron-canvas');
+    if(c) cauldronAnim = new CauldronAnimator(c);
+  }catch(_){ /* ignore */ }
+  const btnClearC = document.getElementById('btn-clear-cauldron');
+  if(btnClearC) btnClearC.addEventListener('click', clearCauldron);
+
   document.getElementById('btn-reset').addEventListener('click', ()=>{
     if(confirm('Скинути інвентар, рецепти та історію на цьому телефоні?')){
       localStorage.removeItem(STORAGE_KEY);
       state = loadState();
+      cauldronSlots = Array(5).fill(null);
       reqItems = [];
-      renderInventory(); renderReqList(); renderRecipes(); renderHistory();
+      _lastCraftSig = '';
+      renderInventory(); renderCraftUI(); renderRecipes(); renderHistory();
       toast('Скинуто');
     }
   });
@@ -740,64 +862,27 @@ function wire(){
     }
   });
 
-  // Котел (крафт)
-  const ca = document.getElementById('cauldron');
-  if(ca){
-    const handler = (ev)=>{
-      const actEl = ev.target?.closest?.('[data-act]');
-      if(actEl){
-        try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){}
-        const act = actEl.dataset.act;
-        const idx = Number(actEl.dataset.slot||0);
-        if(act === 'inc') adjustSlotQty(idx, +1);
-        else if(act === 'dec') adjustSlotQty(idx, -1);
-        else if(act === 'rm'){ clearSlot(idx); renderReqList(); }
-        return;
-      }
-      const slotEl = ev.target?.closest?.('.cslot');
-      if(slotEl){
-        try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){}
-        selectedSlot = Number(slotEl.dataset.slot||0);
-        renderCraftSlots();
-      }
-    };
-    ca.addEventListener('pointerup', handler, {passive:false});
-    ca.addEventListener('touchend', handler, {passive:false});
-    ca.addEventListener('click', handler);
-  }
-
-  document.getElementById('craft-filter')?.addEventListener('input', ()=> renderCraftInventoryList());
-
-  document.getElementById('btn-clear-slots')?.addEventListener('click', ()=>{
-    clearAllSlots();
-    const rc = document.getElementById('req-code');
-    if(rc) rc.value = '';
-    toast('Котел очищено');
-  });
-
   document.getElementById('btn-make-req').addEventListener('click', ()=>{
-    const items = aggregateSlots();
-    if(items.length === 0){
-      toast('Котел порожній');
-      return;
-    }
-    // Перевірка інвентаря (з урахуванням рідкостей)
-    for(const it of items){
+    syncReqFromSlots();
+    if(reqItems.length===0){ toast('Додай сутності'); return; }
+
+    // Validate against inventory (aggregate)
+    for(const it of reqItems){
+      const e = it.essence;
       const need = Number(it.qty||0);
-      const have = invQty(it.essence, it.rarity||'Common');
+      const have = invQty(e, it.rarity||'Common');
       if(need > have){
-        toast(`Недостатньо ${it.essence} (${it.rarity}): потрібно ${need}, є ${have}`);
+        toast(`Недостатньо ${e}: потрібно ${need}, є ${have}`);
         return;
       }
     }
 
-    const id = (crypto?.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
-    const payload = { v: 2, type: 'craft_request', pack_id: id, issued_at: nowIso(), items: items.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
+    const payload = { v: 1, type: 'craft_request', pack_id: crypto.randomUUID(), issued_at: nowIso(), items: reqItems.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
     document.getElementById('req-code').value = makeReqCode(payload);
     toast('Код згенеровано');
   });
 
-document.getElementById('btn-copy-req').addEventListener('click', async()=>{
+  document.getElementById('btn-copy-req').addEventListener('click', async()=>{
     const code = document.getElementById('req-code').value.trim();
     if(!code){ toast('Нема коду'); return; }
     try{ await navigator.clipboard.writeText(code); toast('Скопійовано'); }catch(_){ toast('Не вдалось скопіювати'); }
@@ -824,7 +909,7 @@ document.getElementById('btn-copy-req').addEventListener('click', async()=>{
       applyPayload(payload);
       state.imported_pack_ids.push(pid);
       saveState();
-      renderInventory(); renderRecipes(); renderHistory();
+      renderInventory(); renderCraftUI(); renderRecipes(); renderHistory();
       toast('Імпорт успішний');
       document.getElementById('imp-code').value='';
     }catch(err){
@@ -874,7 +959,7 @@ document.getElementById('btn-copy-req').addEventListener('click', async()=>{
         if(!obj || typeof obj !== 'object') throw new Error('Не JSON');
         localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
         state = loadState();
-        renderInventory(); renderRecipes(); renderHistory();
+        renderInventory(); renderCraftUI(); renderRecipes(); renderHistory();
         toast('Імпортовано');
       }catch(err){ toast('Помилка імпорту: ' + (err?.message||'')); }
     };
@@ -886,7 +971,5 @@ document.getElementById('btn-copy-req').addEventListener('click', async()=>{
 
 window.addEventListener('load', ()=>{
   wire();
-  fixCauldronHeight();
-  window.addEventListener('resize', fixCauldronHeight);
-  renderInventory(); renderReqList(); renderRecipes(); renderHistory();
+  renderInventory(); renderCraftUI(); renderRecipes(); renderHistory();
 });

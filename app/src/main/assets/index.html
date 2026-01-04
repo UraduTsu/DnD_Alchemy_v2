@@ -46,7 +46,7 @@
          background:rgba(255,255,255,.03); font-size:12px; color:var(--muted);}
     .grid{display:grid; grid-template-columns: 1fr; gap:10px;}
     @media (min-width: 520px){ .grid.two{grid-template-columns: 1fr 1fr;} 
-    .grid.three{display:grid; grid-template-columns:repeat(3, 1fr); gap:10px;}
+    .grid.three{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px;}
     @media (max-width:720px){ .grid.three{grid-template-columns:1fr;} }
 
 }
@@ -64,65 +64,25 @@
     .hr{height:1px; background:rgba(255,255,255,.08); margin:12px 0;}
     .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:84px; background:rgba(0,0,0,.72);
            border:1px solid rgba(255,255,255,.14); color:var(--text); padding:10px 12px; border-radius:999px; font-size:13px; z-index:50;}
-  /* Cauldron UI */
-    .cauldron-wrap{display:flex; justify-content:center; padding:10px 0 2px;}
-    .cauldron{position:relative; display:block; width:320px; height:320px; max-width:92vw; max-height:92vw; min-height:240px;}
-    .pot{position:absolute; left:50%; top:54%; transform:translate(-50%,-50%); width:72%; height:62%;}
-    .pot-body{position:absolute; inset:14% 6% 6% 6%; border-radius:0 0 38% 38%;
-      background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.35));
-      border:1px solid rgba(255,255,255,.10);
-      box-shadow:0 14px 40px rgba(0,0,0,.45) inset, 0 10px 30px rgba(0,0,0,.35);
-    }
-    .pot-rim{position:absolute; left:6%; right:6%; top:8%; height:18%;
-      border-radius:999px;
-      background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(0,0,0,.35));
-      border:1px solid rgba(255,255,255,.10);
-      box-shadow:0 10px 22px rgba(0,0,0,.35);
-    }
-    .pot-glow{position:absolute; left:12%; right:12%; top:20%; height:32%;
-      border-radius:999px;
-      background:radial-gradient(circle at 50% 50%, rgba(96,165,250,.30), rgba(96,165,250,0) 65%);
-      filter:blur(1px);
-      pointer-events:none;
-    }
 
-    .cslot{
-      position:absolute; width:44%; height:18%;
-      border-radius:999px;
-      background:rgba(17,24,39,.72);
-      border:1px solid rgba(255,255,255,.10);
-      color:var(--text);
-      padding:8px 10px;
-      display:flex; align-items:center; justify-content:space-between;
-      gap:10px;
-      box-shadow:0 8px 20px rgba(0,0,0,.35);
-      -webkit-tap-highlight-color: transparent;
-    }
-    .cslot:active{transform:scale(.99);}
-    .cslot.selected{outline:2px solid rgba(96,165,250,.8); box-shadow:0 0 0 4px rgba(96,165,250,.18), 0 12px 30px rgba(0,0,0,.40);}
-    .cslot .left{display:flex; flex-direction:column; align-items:flex-start; min-width:0; flex:1;}
-    .cslot .title{font-weight:800; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-    .cslot .sub{font-size:11px; color:var(--muted);}
-    .cslot .qtyctl{display:flex; align-items:center; gap:6px;}
-    .cslot .qty{font-family:var(--mono); font-size:12px;}
-    .cslot .qbtn{
-      width:30px; height:28px; border-radius:10px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(255,255,255,.06); color:var(--text);
-      display:flex; align-items:center; justify-content:center;
-    }
-    .cslot .qbtn:active{transform:scale(.98);}
-    .cslot .rm{width:30px; height:28px; border-radius:10px; border:1px solid rgba(248,113,113,.35);
-      background:rgba(248,113,113,.12); color:var(--text);
-      display:flex; align-items:center; justify-content:center;
-    }
+    /* --- Cauldron crafting (DM-like) --- */
+    .cauldron-grid{display:grid; grid-template-columns:1fr; gap:12px; align-items:center;}
+    @media (min-width: 720px){ .cauldron-grid{grid-template-columns: 1fr 1fr;} }
+    .slots{display:flex; flex-direction:column; gap:10px;}
+    .slot{padding:12px; border-radius:14px; border:2px dashed rgba(120,120,135,0.45); background:rgba(28,22,38,0.88);
+          display:flex; gap:10px; align-items:center;}
+    .slot.filled{border-style:solid;}
+    .slot .slot-label{flex:1; min-width:0;}
+    .slot .slot-title{font-weight:750; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    .slot .slot-sub{font-size:12px; color:var(--muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    .slot .slot-x{width:32px; height:32px; border-radius:12px; border:1px solid rgba(255,255,255,.14);
+                 background:rgba(255,255,255,.05); color:var(--text); cursor:pointer;}
+    .slot .slot-x:active{transform:translateY(1px);}
 
-    /* Slot positions (4 around the rim) */
-    .cslot[data-slot="0"]{left:6%; top:8%;}
-    .cslot[data-slot="1"]{right:6%; top:8%;}
-    .cslot[data-slot="2"]{left:6%; bottom:10%;}
-    .cslot[data-slot="3"]{right:6%; bottom:10%;}
-</style>
+    .cauldron-canvas-wrap{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;}
+    #cauldron-canvas{width:100%; max-width:420px; aspect-ratio:1/1; border-radius:999px;}
+    .cauldron-hint{font-size:12px; text-align:center;}
+  </style>
 </head>
 <body>
 <div class="app">
@@ -154,58 +114,65 @@
     </section>
 
     <section id="view-craft" class="hidden">
-  <div class="card">
-    <div style="font-weight:800; font-size:16px;">Котел</div>
-    <div class="muted" style="font-size:12px; margin-top:4px;">
-      Сутності підтягуються <b>з інвентаря</b>. Натисни слот на котлі → натисни матеріал нижче.
-    </div>
-    <div class="hr"></div>
+      <div class="card">
+        <div class="row">
+          <div>
+            <div style="font-weight:800; font-size:16px;">Котел (як у DM-апці)</div>
+            <div class="muted" style="font-size:12px; margin-top:4px;">
+              Торкнись інгредієнта <b>з інвентаря</b>, щоб додати його у слот котла (макс. 5). Це <b>не витрачає</b> матеріали — витрати/додатки прийдуть у відповіді майстра (craft_result).
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn small danger" id="btn-clear-cauldron">🧹 Очистити котел</button>
+        </div>
 
-    <div class="cauldron-wrap">
-      <div class="cauldron" id="cauldron">
-        <div class="cslot" data-slot="0" aria-label="Слот 1"></button>
-        <div class="cslot" data-slot="1" aria-label="Слот 2"></button>
-        <div class="cslot" data-slot="2" aria-label="Слот 3"></button>
-        <div class="cslot" data-slot="3" aria-label="Слот 4"></div>
-        <div class="pot" aria-hidden="true">
-          <div class="pot-rim"></div>
-          <div class="pot-body"></div>
-          <div class="pot-glow"></div>
+        <div class="hr"></div>
+
+        <div class="cauldron-grid">
+          <div>
+            <div class="muted" style="font-size:12px; margin-bottom:8px;">Слоти</div>
+            <div id="cauldron-slots" class="slots"></div>
+          </div>
+          <div class="cauldron-canvas-wrap">
+            <canvas id="cauldron-canvas" aria-label="Cauldron"></canvas>
+            <div class="cauldron-hint muted">Колір «рідини» змінюється від сутностей у слотах</div>
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="row">
+          <div style="font-weight:800;">Інвентар для крафту</div>
+          <div class="spacer"></div>
+          <span class="tag" id="craft-inv-meta">—</span>
+        </div>
+        <div class="list" id="craft-inv-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div style="font-weight:800;">Інгредієнти в запиті</div>
+          <div class="spacer"></div>
+          <span class="tag" id="req-count">0 позицій</span>
+        </div>
+        <div class="hr"></div>
+        <div class="list" id="req-list"></div>
+        <div class="hr"></div>
+
+        <div class="row">
+          <button class="btn primary" id="btn-make-req">Згенерувати код запиту</button>
+          <button class="btn" id="btn-copy-req">Скопіювати</button>
+          <button class="btn" id="btn-share-req">Поділитись</button>
+        </div>
+        <div style="margin-top:10px;">
+          <textarea id="req-code" placeholder="Тут зʼявиться код запиту…"></textarea>
+        </div>
+
+        <div class="muted" style="font-size:12px; margin-top:10px;">
+          Формат: <span class="mono">NXREQ|…</span> (не підписаний — майстер приймає як “заявку”).
         </div>
       </div>
-    </div>
-
-    <div class="muted" style="font-size:12px; margin-top:6px;">
-      Склад котла: <span id="ca-summary" class="mono"></span>
-    </div>
-
-    <div class="row" style="margin-top:12px; gap:10px;">
-      <button class="btn small" id="btn-clear-slots">Очистити</button>
-      <div class="spacer"></div>
-      <button class="btn small ok" id="btn-make-req">Згенерувати NXREQ</button>
-    </div>
-
-    <div class="hr"></div>
-    <label class="muted" style="font-size:12px;">Код запиту (NXREQ)</label>
-    <textarea class="input mono" id="req-code" rows="3" placeholder="Тут зʼявиться код…" readonly></textarea>
-    <div class="row" style="margin-top:10px; gap:10px;">
-      <button class="btn small" id="btn-copy-req">Копіювати</button>
-      <button class="btn small" id="btn-share-req">Поділитись</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div style="font-weight:800; font-size:16px;">Матеріали з інвентаря</div>
-    <div class="muted" style="font-size:12px; margin-top:4px;">
-      Показано лише те, що зараз є (з урахуванням рідкості).
-    </div>
-    <div class="hr"></div>
-    <div class="row">
-      <input class="input" id="craft-filter" placeholder="Пошук: сутність або рідкість" />
-    </div>
-  </div>
-  <div class="list" id="craft-inv-list"></div>
-</section>
+    </section>
 
     <section id="view-recipes" class="hidden">
       <div class="card">
