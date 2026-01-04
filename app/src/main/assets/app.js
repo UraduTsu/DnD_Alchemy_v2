@@ -3,8 +3,21 @@
 // This is not strong protection against a motivated reverse engineer.
 
 const NXA_SECRET = "NXA-i2v7rzHkk5aGMgFTTUYigGZHskyssAgGk2QLy9ToMJY";
-const CODE_PREFIX = "NXA1|";
-const REQ_PREFIX  = "NXREQ|";
+// Code formats:
+// - Legacy (v1):
+//    DM -> Player : NXA1|<b64url(json)>|<b64url(hmac_sha256(json))>
+//    Player -> DM : NXREQ|<b64url(json)>
+// - Compressed (v2, shorter):
+//    DM -> Player : NXA2|<b64url(gzip(json))>|<b64url(hmac_sha256(gzip_bytes))>
+//    Player -> DM : NXQ2|<b64url(gzip(json))>
+//
+// The app generates v2 by default, but can still *read* v1.
+
+const CODE_PREFIX_V1 = "NXA1|";
+const CODE_PREFIX_V2 = "NXA2|";
+
+const REQ_PREFIX_V1  = "NXREQ|";
+const REQ_PREFIX_V2  = "NXQ2|";
 
 const STORAGE_KEY = "nxa_player_state_v1";
 
@@ -54,6 +67,85 @@ function toast(msg){
   setTimeout(()=>el.remove(), 2200);
 }
 
+function bindTap(el, handler){
+  if(!el || !handler) return;
+  let last = 0;
+  const wrapped = (ev) => {
+    const now = Date.now();
+    if(now - last < 250) return;
+    last = now;
+    try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){ }
+    try{
+      const res = handler(ev);
+      if(res && typeof res.then === 'function') res.catch((err)=>console.error(err));
+    }catch(err){ console.error(err); }
+  };
+  // Mobile/WebView sometimes loses 'click'. We listen to pointerup + touchend too.
+  el.addEventListener('pointerup', wrapped, {passive:false});
+  el.addEventListener('touchend', wrapped, {passive:false});
+  el.addEventListener('click', wrapped);
+}
+
+function confirmOverlay(message, yesLabel='Так', noLabel='Ні'){
+  // window.confirm is often blocked/suppressed inside some Android WebViews.
+  return new Promise((resolve)=>{
+    const ov = document.createElement('div');
+    ov.style.position = 'fixed';
+    ov.style.inset = '0';
+    ov.style.background = 'rgba(0,0,0,0.55)';
+    ov.style.display = 'flex';
+    ov.style.alignItems = 'center';
+    ov.style.justifyContent = 'center';
+    ov.style.zIndex = '99999';
+    ov.style.padding = '16px';
+
+    const card = document.createElement('div');
+    card.style.maxWidth = '520px';
+    card.style.width = '100%';
+    card.style.background = '#17131f';
+    card.style.border = '1px solid rgba(255,255,255,0.10)';
+    card.style.borderRadius = '16px';
+    card.style.boxShadow = '0 18px 50px rgba(0,0,0,0.45)';
+    card.style.padding = '16px';
+    card.style.color = '#fff';
+
+    const txt = document.createElement('div');
+    txt.style.fontSize = '15px';
+    txt.style.lineHeight = '1.4';
+    txt.style.marginBottom = '14px';
+    txt.textContent = message;
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.gap = '10px';
+    row.style.justifyContent = 'flex-end';
+
+    const no = document.createElement('button');
+    no.className = 'btn small';
+    no.textContent = noLabel;
+
+    const yes = document.createElement('button');
+    yes.className = 'btn small danger';
+    yes.textContent = yesLabel;
+
+    row.appendChild(no);
+    row.appendChild(yes);
+
+    card.appendChild(txt);
+    card.appendChild(row);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+
+    const cleanup = () => { try{ ov.remove(); }catch(_){ } };
+    bindTap(no, ()=>{ cleanup(); resolve(false); });
+    bindTap(yes, ()=>{ cleanup(); resolve(true); });
+    // tap outside cancels
+    bindTap(ov, (ev)=>{
+      if(ev.target === ov){ cleanup(); resolve(false); }
+    });
+  });
+}
+
 function base64urlEncode(bytes){
   let bin = '';
   bytes.forEach(b => bin += String.fromCharCode(b));
@@ -68,6 +160,56 @@ function base64urlDecode(str){
   return bytes;
 }
 
+function supportsGzipStreams(){
+  return (typeof CompressionStream !== 'undefined') && (typeof DecompressionStream !== 'undefined');
+}
+
+async function gzipCompressUtf8(str){
+  const enc = new TextEncoder();
+  const input = enc.encode(str);
+  if(!supportsGzipStreams()) return input;
+  const cs = new CompressionStream('gzip');
+  const writer = cs.writable.getWriter();
+  writer.write(input);
+  writer.close();
+  const ab = await new Response(cs.readable).arrayBuffer();
+  return new Uint8Array(ab);
+}
+
+async function gzipDecompressToUtf8(bytes){
+  if(!supportsGzipStreams()){
+    // Best-effort fallback: treat bytes as UTF-8.
+    return new TextDecoder().decode(bytes);
+  }
+  const ds = new DecompressionStream('gzip');
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const ab = await new Response(ds.readable).arrayBuffer();
+  return new TextDecoder().decode(new Uint8Array(ab));
+}
+
+async function shortCodeHash(codeStr){
+  const enc = new TextEncoder();
+  const data = enc.encode((codeStr||'').trim());
+  try{
+    if(crypto?.subtle?.digest){
+      const dig = await crypto.subtle.digest('SHA-256', data);
+      const bytes = new Uint8Array(dig).slice(0, 8); // 64-bit is enough for a local "used" set
+      return base64urlEncode(bytes);
+    }
+  }catch(_){ /* ignore */ }
+  // Fallback: FNV-1a 32-bit
+  let h = 0x811c9dc5;
+  for(const b of data){
+    h ^= b;
+    h = (h + ((h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24))) >>> 0;
+  }
+  const out = new Uint8Array(4);
+  out[0] = (h>>>24)&255; out[1] = (h>>>16)&255; out[2] = (h>>>8)&255; out[3]=h&255;
+  return base64urlEncode(out);
+}
+
 async function hmacSign(payloadBytes){
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(NXA_SECRET), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
@@ -75,25 +217,102 @@ async function hmacSign(payloadBytes){
   return new Uint8Array(sig);
 }
 
+function expandNxa2(obj){
+  // Accept both: (a) compressed legacy JSON, (b) compact schema.
+  if(!obj || typeof obj !== 'object') return obj;
+  if(obj.type) return obj; // legacy schema
+  if(obj.v !== 2) return obj;
+
+  const tmap = { L: 'loot', C: 'craft_result', R: 'recipe_unlock' };
+  const type = tmap[obj.t] || obj.t;
+  const out = {
+    v: 1,
+    type: type,
+    pack_id: obj.id,
+    issued_at: obj.at,
+    data: {}
+  };
+  const d = obj.d || {};
+
+  const expandInv = (rows) => (rows||[]).filter(Boolean).map(row => {
+    const e = row?.[0];
+    const r = row?.[1] || 'Common';
+    const q = row?.[2] ?? 0;
+    const n = row?.[3] || e || '';
+    return { name: n, essence: e, rarity: r, qty_delta: q };
+  });
+
+  if(type === 'loot'){
+    out.data.inventory_delta = expandInv(d.i);
+  } else if(type === 'craft_result'){
+    out.data.title = d.n || 'Результат крафту';
+    out.data.visual_description = d.v || '';
+    out.data.essences = (d.es && typeof d.es === 'object') ? d.es : {};
+    out.data.inventory_delta = expandInv(d.i);
+    out.data.discover_recipe = Boolean(d.dr);
+    out.data.recipe_id = d.rid || '';
+    out.data.recipe_title = d.rt || out.data.title;
+  } else if(type === 'recipe_unlock'){
+    out.data.recipe_id = d.rid || '';
+    out.data.recipe_title = d.rt || 'Невідомий предмет';
+    out.data.visual_description = d.v || '';
+    out.data.essences = (d.es && typeof d.es === 'object') ? d.es : {};
+  }
+
+  return out;
+}
+
 async function decodeDmCode(code){
   code = (code||'').trim();
-  if(!code.startsWith(CODE_PREFIX)) throw new Error("Це не код NXA1");
+  const isV1 = code.startsWith(CODE_PREFIX_V1);
+  const isV2 = code.startsWith(CODE_PREFIX_V2);
+  if(!isV1 && !isV2) throw new Error("Це не код NXA");
+  if(isV2 && !supportsGzipStreams()){
+    throw new Error('Ваш браузер/ WebView не підтримує короткі коди NXA2 (gzip). Онови Chrome/WebView або попроси DM згенерувати NXA1.');
+  }
   const parts = code.split("|");
   if(parts.length !== 3) throw new Error("Невірний формат коду");
+
   const payloadBytes = base64urlDecode(parts[1]);
   const sigBytes = base64urlDecode(parts[2]);
+
+  // Signature is calculated over the *exact* payload bytes (raw JSON for v1, gzip bytes for v2).
   const goodSig = await hmacSign(payloadBytes);
   if(sigBytes.length !== goodSig.length) throw new Error("Підпис не збігається");
   for(let i=0;i<sigBytes.length;i++) if(sigBytes[i] !== goodSig[i]) throw new Error("Підпис не збігається");
-  const payloadStr = new TextDecoder().decode(payloadBytes);
-  return JSON.parse(payloadStr);
+
+  const payloadStr = isV2
+    ? await gzipDecompressToUtf8(payloadBytes)
+    : new TextDecoder().decode(payloadBytes);
+
+  const obj = JSON.parse(payloadStr);
+  return isV2 ? expandNxa2(obj) : obj;
 }
 
-function makeReqCode(reqObj){
-  const enc = new TextEncoder();
+function compactReqV2(reqObj){
+  // Compact schema for shorter codes (v2):
+  // {v:2,t:'Q',id,at,it:[[essence,rarity,qty],...]}
+  if(!reqObj || typeof reqObj !== 'object') return reqObj;
+  const items = Array.isArray(reqObj.items) ? reqObj.items : [];
+  return {
+    v: 2,
+    t: 'Q',
+    id: reqObj.pack_id || '',
+    at: reqObj.issued_at || nowIso(),
+    it: items.filter(Boolean).map(i => [i.essence, (i.rarity||'Common'), Number(i.qty||0)])
+  };
+}
+
+async function makeReqCode(reqObj){
+  // Generate the shortest format we can.
+  if(supportsGzipStreams()){
+    const payloadStr = JSON.stringify(compactReqV2(reqObj));
+    const gz = await gzipCompressUtf8(payloadStr);
+    return REQ_PREFIX_V2 + base64urlEncode(gz);
+  }
   const payloadStr = JSON.stringify(reqObj);
-  const payloadBytes = enc.encode(payloadStr);
-  return REQ_PREFIX + base64urlEncode(payloadBytes);
+  const payloadBytes = new TextEncoder().encode(payloadStr);
+  return REQ_PREFIX_V1 + base64urlEncode(payloadBytes);
 }
 
 function defaultState(){
@@ -101,6 +320,7 @@ function defaultState(){
     v: 1,
     created_at: nowIso(),
     imported_pack_ids: [],
+    used_code_hashes: [],
     inventory: [], // [{essence, qty}] (simplified)
     recipes: [],   // [{recipe_id, title, gm_visual, visual, essences, created_at, updated_at}]
     history: []    // [{ts, kind, summary, data}]
@@ -123,6 +343,7 @@ function loadState(){
 });
 
     merged.imported_pack_ids = Array.isArray(merged.imported_pack_ids) ? merged.imported_pack_ids : [];
+    merged.used_code_hashes = Array.isArray(merged.used_code_hashes) ? merged.used_code_hashes : [];
     merged.inventory = normalizeInventory(Array.isArray(merged.inventory) ? merged.inventory : []);
     merged.history = Array.isArray(merged.history) ? merged.history : [];
 
@@ -839,30 +1060,30 @@ function wire(){
     if(c) cauldronAnim = new CauldronAnimator(c);
   }catch(_){ /* ignore */ }
   const btnClearC = document.getElementById('btn-clear-cauldron');
-  if(btnClearC) btnClearC.addEventListener('click', clearCauldron);
+  bindTap(btnClearC, clearCauldron);
 
-  document.getElementById('btn-reset').addEventListener('click', ()=>{
-    if(confirm('Скинути інвентар, рецепти та історію на цьому телефоні?')){
-      localStorage.removeItem(STORAGE_KEY);
-      state = loadState();
-      cauldronSlots = Array(5).fill(null);
-      reqItems = [];
-      _lastCraftSig = '';
-      renderInventory(); renderCraftUI(); renderRecipes(); renderHistory();
-      toast('Скинуто');
-    }
+  bindTap(document.getElementById('btn-reset'), async()=>{
+    const ok = await confirmOverlay('Скинути інвентар, рецепти, історію та використані коди на цьому телефоні?');
+    if(!ok) return;
+    localStorage.removeItem(STORAGE_KEY);
+    state = loadState();
+    cauldronSlots = Array(5).fill(null);
+    reqItems = [];
+    _lastCraftSig = '';
+    renderInventory(); renderCraftUI(); renderRecipes(); renderHistory();
+    toast('Скинуто');
   });
 
-  document.getElementById('btn-reset-recipes').addEventListener('click', ()=>{
-    if(confirm('Скинути всі рецепти на цьому телефоні?')){
-      state.recipes = [];
-      saveState();
-      renderRecipes();
-      toast('Рецепти скинуто');
-    }
+  bindTap(document.getElementById('btn-reset-recipes'), async()=>{
+    const ok = await confirmOverlay('Скинути всі рецепти на цьому телефоні?');
+    if(!ok) return;
+    state.recipes = [];
+    saveState();
+    renderRecipes();
+    toast('Рецепти скинуто');
   });
 
-  document.getElementById('btn-make-req').addEventListener('click', ()=>{
+  bindTap(document.getElementById('btn-make-req'), async()=>{
     syncReqFromSlots();
     if(reqItems.length===0){ toast('Додай сутності'); return; }
 
@@ -878,17 +1099,17 @@ function wire(){
     }
 
     const payload = { v: 1, type: 'craft_request', pack_id: crypto.randomUUID(), issued_at: nowIso(), items: reqItems.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
-    document.getElementById('req-code').value = makeReqCode(payload);
+    document.getElementById('req-code').value = await makeReqCode(payload);
     toast('Код згенеровано');
   });
 
-  document.getElementById('btn-copy-req').addEventListener('click', async()=>{
+  bindTap(document.getElementById('btn-copy-req'), async()=>{
     const code = document.getElementById('req-code').value.trim();
     if(!code){ toast('Нема коду'); return; }
     try{ await navigator.clipboard.writeText(code); toast('Скопійовано'); }catch(_){ toast('Не вдалось скопіювати'); }
   });
 
-  document.getElementById('btn-share-req').addEventListener('click', async()=>{
+  bindTap(document.getElementById('btn-share-req'), async()=>{
     const code = document.getElementById('req-code').value.trim();
     if(!code){ toast('Нема коду'); return; }
     if(navigator.share){
@@ -898,16 +1119,31 @@ function wire(){
     }
   });
 
-  document.getElementById('btn-import').addEventListener('click', async()=>{
+  bindTap(document.getElementById('btn-import'), async()=>{
     const code = document.getElementById('imp-code').value.trim();
     if(!code){ toast('Встав код'); return; }
     try{
+      const ch = await shortCodeHash(code);
+      if(state.used_code_hashes.includes(ch)) { toast('Цей код вже використано'); return; }
       const payload = await decodeDmCode(code);
-      const pid = payload.pack_id;
-      if(!pid) throw new Error('Нема pack_id');
+      const pid = payload.pack_id || ch;
       if(state.imported_pack_ids.includes(pid)) { toast('Цей пакунок вже імпортований'); return; }
-      applyPayload(payload);
+
+      // Mark the code as used *before* applying, so a partial apply can't be abused.
+      state.used_code_hashes.push(ch);
       state.imported_pack_ids.push(pid);
+      saveState();
+
+      try{
+        applyPayload(payload);
+      }catch(err){
+        // Roll back marks if apply failed (should be rare).
+        state.used_code_hashes = state.used_code_hashes.filter(x=>x!==ch);
+        state.imported_pack_ids = state.imported_pack_ids.filter(x=>x!==pid);
+        saveState();
+        throw err;
+      }
+
       saveState();
       renderInventory(); renderCraftUI(); renderRecipes(); renderHistory();
       toast('Імпорт успішний');
@@ -918,7 +1154,7 @@ function wire(){
     }
   });
 
-  document.getElementById('btn-paste').addEventListener('click', async()=>{
+  bindTap(document.getElementById('btn-paste'), async()=>{
     // Clipboard API часто блокується в офлайн/не-secure контексті (особливо в APK/WebView).
     // Тому робимо fallback через prompt, де гравець може вставити вручну.
     try{
@@ -937,7 +1173,7 @@ function wire(){
     }
   });
 
-  document.getElementById('btn-export').addEventListener('click', ()=>{
+  bindTap(document.getElementById('btn-export'), ()=>{
     const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -946,7 +1182,7 @@ function wire(){
     URL.revokeObjectURL(a.href);
   });
 
-  document.getElementById('btn-import-json').addEventListener('click', async()=>{
+  bindTap(document.getElementById('btn-import-json'), async()=>{
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = 'application/json';
