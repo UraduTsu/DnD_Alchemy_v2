@@ -95,7 +95,7 @@
 <div class="app">
   <header>
     <div class="title">NexusAlchemy — Player</div>
-    <div class="sub">Коди обміну • Інвентар • Книга рецептів • Нотатки (редагуй сам)</div>
+    <div class="sub">Інвентар • Котел • Рецепти • Обмін кодами</div>
   </header>
 
   <main>
@@ -104,7 +104,7 @@
         <div class="row">
           <div>
             <div style="font-weight:800; font-size:16px;">Інвентар</div>
-            <div class="muted" style="font-size:12px; margin-top:4px;">Матеріали приходять від майстра через код (loot / craft_result).</div>
+            <div class="muted" style="font-size:12px; margin-top:4px;">Матеріали приходять від майстра через коди видачі та результату крафту.</div>
           </div>
           <div class="spacer"></div>
           <button class="btn small danger" id="btn-reset">Скинути дані</button>
@@ -116,7 +116,7 @@
       </div>
       <div class="list" id="inv-list"></div>
       <div class="card muted" style="font-size:12px;">
-        Порада: запит на крафт робиться у вкладці <b>Крафт</b> (код <span class="mono">NXREQ|…</span>).
+        Порада: запит на крафт робиться у вкладці <b>Крафт</b> (код <span class="mono">NXQ2|…</span> або <span class="mono">NXREQ|…</span>).
       </div>
     </section>
 
@@ -124,9 +124,9 @@
       <div class="card">
         <div class="row">
           <div>
-            <div style="font-weight:800; font-size:16px;">Котел (як у DM-апці)</div>
+            <div style="font-weight:800; font-size:16px;">Котел</div>
             <div class="muted" style="font-size:12px; margin-top:4px;">
-              Торкнись інгредієнта <b>з інвентаря</b>, щоб додати його у слот котла (макс. 5). Це <b>не витрачає</b> матеріали — витрати/додатки прийдуть у відповіді майстра (craft_result).
+              Торкнись інгредієнта <b>з інвентаря</b>, щоб додати його у слот котла (макс. 5). Це <b>не витрачає</b> матеріали — витрати/додатки прийдуть у відповіді майстра кодом результату крафту.
             </div>
           </div>
           <div class="spacer"></div>
@@ -176,7 +176,7 @@
         </div>
 
         <div class="muted" style="font-size:12px; margin-top:10px;">
-          Формат: <span class="mono">NXREQ|…</span> (не підписаний — майстер приймає як “заявку”).
+          Формат: <span class="mono">NXQ2|…</span> (або <span class="mono">NXREQ|…</span>) — це запит на крафт для майстра.
         </div>
       </div>
     </section>
@@ -202,7 +202,7 @@
       <div class="card">
         <div style="font-weight:800; font-size:16px;">Імпорт коду від майстра</div>
         <div class="muted" style="font-size:12px; margin-top:4px;">
-          Вставляй коди <span class="mono">NXA1|…</span>. Повторний імпорт того ж пакунка блокується (навіть якщо змінити текст/імʼя).
+          Вставляй коди <span class="mono">NXA2|…</span> (або <span class="mono">NXA1|…</span>). Повторний імпорт того ж коду/пакунка блокується.
         </div>
         <div class="hr"></div>
         <textarea id="imp-code" placeholder="Встав код від майстра…"></textarea>
@@ -216,7 +216,7 @@
         <div class="row">
           <div style="font-weight:800;">Історія (останні 20)</div>
           <div class="spacer"></div>
-          <button class="btn small" id="btn-export">Експорт JSON (backup)</button>
+          <button class="btn small" id="btn-export">Експорт JSON (резервна копія)</button>
           <button class="btn small" id="btn-import-json">Імпорт JSON</button>
         </div>
         <div class="hr"></div>
@@ -229,7 +229,7 @@
     <button class="btn small" data-tab="inv">Інвентар</button>
     <button class="btn small" data-tab="craft">Крафт</button>
     <button class="btn small" data-tab="recipes">Рецепти</button>
-    <button class="btn small" data-tab="import">Код</button>
+    <button class="btn small" data-tab="import">Коди</button>
   </nav>
 </div>
 

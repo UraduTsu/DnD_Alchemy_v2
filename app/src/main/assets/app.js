@@ -291,7 +291,7 @@ async function decodeDmCode(code){
   const isV2 = code.startsWith(CODE_PREFIX_V2);
   if(!isV1 && !isV2) throw new Error("Це не код NXA");
   if(isV2 && !supportsGzipStreams()){
-    throw new Error('Ваш браузер/ WebView не підтримує короткі коди NXA2 (gzip). Онови Chrome/WebView або попроси DM згенерувати NXA1.');
+    throw new Error('Цей пристрій не підтримує короткі коди NXA2. Онови Chrome / Android System WebView або попроси майстра згенерувати NXA1.');
   }
   const parts = code.split("|");
   if(parts.length !== 3) throw new Error("Невірний формат коду");
@@ -414,6 +414,42 @@ function addInventoryDelta(deltaItems){
   }
   // Keep only positive qty
   state.inventory = Array.from(map.values()).filter(it => Number(it.qty||0) > 0);
+}
+
+function canApplyInventoryDelta(deltaItems){
+  // Block any payload that would make inventory go below 0.
+  // We validate per (essence + rarity), aggregating all deltas first.
+  const cur = new Map(state.inventory.map(it => [invKey(it), Number(it.qty||0)]));
+  const sum = new Map();
+
+  for(const d of (deltaItems||[])){
+    if(!d) continue;
+    const essence = ((d.essence||'') || (d.name||'')).toString().trim();
+    const rarity  = (d.rarity||'Common').toString().trim() || 'Common';
+    const qtyd = Number(d.qty_delta ?? d.qty ?? 0);
+    if(!essence || !Number.isFinite(qtyd) || qtyd===0) continue;
+    const key = `${essence.toLowerCase()}||${rarity.toLowerCase()}`;
+    sum.set(key, (sum.get(key)||0) + qtyd);
+  }
+
+  for(const [key, d] of sum.entries()){
+    const have = Number(cur.get(key) || 0);
+    const after = have + Number(d||0);
+    if(after < 0){
+      const [essenceLower, rarityLower] = key.split('||');
+      const essence = (deltaItems||[]).find(x => invKey({essence:((x?.essence||x?.name||'')+'').trim(), rarity:(x?.rarity||'Common')}) === key)?.essence || essenceLower;
+      const rarity = (deltaItems||[]).find(x => invKey({essence:((x?.essence||x?.name||'')+'').trim(), rarity:(x?.rarity||'Common')}) === key)?.rarity || rarityLower;
+      const need = -after;
+      return {
+        ok:false,
+        key,
+        have,
+        need,
+        message:`Недостатньо матеріалів: ${essence} (${rarity}). Потрібно ще ${need}, а є тільки ${have}.`
+      };
+    }
+  }
+  return {ok:true};
 }
 
 function upsertRecipe({recipe_id, title, visual, essences}){
@@ -617,7 +653,7 @@ function renderInventory(){
   if(filteredEss.length === 0){
     const c = document.createElement('div');
     c.className = 'card muted';
-    c.textContent = 'Поки що інвентар порожній. Попроси майстра видати матеріали кодом (loot).';
+    c.textContent = 'Поки що інвентар порожній. Попроси майстра видати матеріали кодом.';
     list.appendChild(c);
     return;
   }
@@ -791,7 +827,7 @@ function renderCraftInvPicker(){
   if(inv.length === 0){
     const d = document.createElement('div');
     d.className = 'item muted';
-    d.textContent = 'Інвентар порожній. Попроси майстра видати матеріали кодом (loot).';
+    d.textContent = 'Інвентар порожній. Попроси майстра видати матеріали кодом.';
     host.appendChild(d);
     return;
   }
@@ -990,7 +1026,7 @@ function openRecipe(recipe_id){
   wrap.querySelector('#restore-gm').addEventListener('click', ()=>{
     const gm = r.gm_visual || '';
     wrap.querySelector('#rec-desc').value = gm;
-    toast('Вставлено оригінал');
+    toast('Повернуто опис від майстра');
   });
 }
 
@@ -1024,23 +1060,30 @@ function renderHistory(){
 function applyPayload(payload){
   const t = payload.type;
   if(t === 'loot') {
-    addInventoryDelta((payload.data && payload.data.inventory_delta) || []);
+    const delta = (payload.data && payload.data.inventory_delta) || [];
+    const chk = canApplyInventoryDelta(delta);
+    if(!chk.ok) throw new Error(chk.message);
+    addInventoryDelta(delta);
     pushHistory('loot', 'Отримано матеріали', payload.data);
   } else if(t === 'craft_result') {
     const data = payload.data || {};
-    if(data.inventory_delta) addInventoryDelta(data.inventory_delta);
+    if(data.inventory_delta){
+      const chk = canApplyInventoryDelta(data.inventory_delta);
+      if(!chk.ok) throw new Error(chk.message);
+      addInventoryDelta(data.inventory_delta);
+    }
     const title = data.title || 'Результат крафту';
     const visual = data.visual_description || '';
     pushHistory('craft', title, data);
     if(data.discover_recipe && data.recipe_id){
       upsertRecipe({recipe_id: data.recipe_id, title: data.recipe_title || title, visual, essences: data.essences || {}});
-      pushHistory('recipe', 'Відкрито рецепт (візуальний опис)', {recipe_id:data.recipe_id});
+      pushHistory('recipe', 'Відкрито рецепт', {recipe_id:data.recipe_id});
     }
   } else if(t === 'recipe_unlock') {
     const data = payload.data || {};
     if(!data.recipe_id) throw new Error('Нема recipe_id');
     upsertRecipe({recipe_id: data.recipe_id, title: data.recipe_title || 'Невідомий предмет', visual: data.visual_description || '', essences: data.essences || {}});
-    pushHistory('recipe', 'Відкрито рецепт (візуальний опис)', data);
+    pushHistory('recipe', 'Відкрито рецепт', data);
   } else {
     throw new Error('Невідомий тип пакунка: ' + t);
   }
@@ -1088,7 +1131,7 @@ function wire(){
   bindTap(btnClearC, clearCauldron);
 
   bindTap(document.getElementById('btn-reset'), async()=>{
-    const ok = await confirmOverlay('Скинути інвентар, рецепти, історію та використані коди на цьому телефоні?');
+    const ok = await confirmOverlay('Скинути всі локальні дані (інвентар, рецепти, історія та використані коди) на цьому телефоні?');
     if(!ok) return;
     localStorage.removeItem(STORAGE_KEY);
     state = loadState();
@@ -1100,12 +1143,12 @@ function wire(){
   });
 
   bindTap(document.getElementById('btn-reset-recipes'), async()=>{
-    const ok = await confirmOverlay('Скинути всі рецепти на цьому телефоні?');
+    const ok = await confirmOverlay('Видалити всі рецепти з цього телефону?');
     if(!ok) return;
     state.recipes = [];
     saveState();
     renderRecipes();
-    toast('Рецепти скинуто');
+    toast('Рецепти видалено');
   });
 
   bindTap(document.getElementById('btn-make-req'), async()=>{
@@ -1140,13 +1183,13 @@ function wire(){
     if(navigator.share){
       try{ await navigator.share({text: code}); }catch(_){}
     } else {
-      try{ await navigator.clipboard.writeText(code); toast('Скопійовано (share недоступний)'); }catch(_){ toast('Share недоступний'); }
+      try{ await navigator.clipboard.writeText(code); toast('Скопійовано (поділитися недоступно)'); }catch(_){ toast('Поділитися недоступно'); }
     }
   });
 
   bindTap(document.getElementById('btn-import'), async()=>{
     const code = document.getElementById('imp-code').value.trim();
-    if(!code){ toast('Встав код'); return; }
+    if(!code){ toast('Встав код у поле'); return; }
     try{
       const ch = await shortCodeHash(code);
       if(state.used_code_hashes.includes(ch)) { toast('Цей код вже використано'); return; }
