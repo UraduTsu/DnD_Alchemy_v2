@@ -6,7 +6,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,14 +17,40 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      - name: Debug tree (show where files are)
+        run: |
+          echo "=== ROOT ==="
+          ls -la
+          echo "=== FIND gradlew ==="
+          find . -maxdepth 3 -type f -name "gradlew" -print
+          echo "=== FIND settings.gradle* ==="
+          find . -maxdepth 3 -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print
 
-      - name: Build Debug APK
-        run: ./gradlew :app:assembleDebug
+      - name: Build Debug APK (auto-detect gradlew)
+        run: |
+          set -euxo pipefail
+
+          if [ -f "./gradlew" ]; then
+            # Fix CRLF if uploaded from Windows
+            sed -i 's/\r$//' ./gradlew
+            chmod +x ./gradlew
+            ./gradlew :app:assembleDebug
+
+          elif [ -f "./android/gradlew" ]; then
+            sed -i 's/\r$//' ./android/gradlew
+            chmod +x ./android/gradlew
+            cd android
+            ./gradlew :app:assembleDebug
+
+          else
+            echo "ERROR: gradlew not found in root or ./android/"
+            exit 1
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nexus-alchemy-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            **/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
