@@ -130,7 +130,9 @@ function normalizeInventory(inv){
 }
 
 
-function invKey(it){ return `${(it.essence||'').toLowerCase()}||${(it.rarity||'Common').toLowerCase()}`; }`; }
+function invKey(it){
+  return `${(it.essence||'').toLowerCase()}||${(it.rarity||'Common').toLowerCase()}`;
+}
 
 function addInventoryDelta(deltaItems){
   // Inventory is tracked by (essence + rarity).
