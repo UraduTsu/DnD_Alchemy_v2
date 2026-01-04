@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.NXA" parent="Theme.AppCompat.Light.NoActionBar">
+        <!-- Fullscreen look -->
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>NexusAlchemy — Player</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <style>
+    :root{
+      --bg:#0b1020; --panel:#111827; --text:#e5e7eb; --muted:#9ca3af;
+      --accent:#60a5fa; --danger:#f87171; --ok:#34d399;
+      --radius:16px; --pad:14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    html,body{height:100%; background:var(--bg); color:var(--text); margin:0; font-family:var(--sans);}
+    *{box-sizing:border-box;}
+    .app{min-height:100%; display:flex; flex-direction:column;}
+    header{padding:16px var(--pad); position:sticky; top:0; background:linear-gradient(to bottom, rgba(11,16,32,.98), rgba(11,16,32,.7)); backdrop-filter: blur(8px); z-index:10; border-bottom:1px solid rgba(255,255,255,.06);}
+    header .title{font-size:18px; font-weight:700;}
+    header .sub{font-size:12px; color:var(--muted); margin-top:4px;}
+    main{flex:1; padding:12px var(--pad) 76px;}
+    .card{background:rgba(17,24,39,.92); border:1px solid rgba(255,255,255,.06); border-radius:var(--radius); padding:14px; box-shadow: 0 10px 30px rgba(0,0,0,.25); margin-bottom:12px;}
+    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+    .spacer{flex:1;}
+    .btn{appearance:none; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04); color:var(--text);
+         padding:10px 12px; border-radius:14px; font-weight:650; cursor:pointer;}
+    .btn:active{transform: translateY(1px);}
+    .btn.primary{background:rgba(96,165,250,.18); border-color:rgba(96,165,250,.45);}
+    .btn.danger{background:rgba(248,113,113,.14); border-color:rgba(248,113,113,.40);}
+    .btn.ok{background:rgba(52,211,153,.14); border-color:rgba(52,211,153,.40);}
+    .btn.small{padding:8px 10px; border-radius:12px; font-weight:650; font-size:13px;}
+    .input, textarea, select{
+      width:100%; border-radius:14px; border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.03); color:var(--text);
+      padding:10px 12px; font-size:14px; outline:none;
+    }
+    textarea{min-height:96px; font-family:var(--mono); font-size:12px;}
+    .mono{font-family:var(--mono);}
+    .muted{color:var(--muted);}
+    .tag{display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.10);
+         background:rgba(255,255,255,.03); font-size:12px; color:var(--muted);}
+    .grid{display:grid; grid-template-columns: 1fr; gap:10px;}
+    @media (min-width: 520px){ .grid.two{grid-template-columns: 1fr 1fr;} }
+    .list{display:flex; flex-direction:column; gap:10px;}
+    .item{padding:12px; border-radius:14px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.03);}
+    .item .top{display:flex; align-items:flex-start; gap:8px;}
+    .item .name{font-weight:750;}
+    .item .meta{font-size:12px; color:var(--muted);}
+    .qty{font-weight:800; font-size:14px; padding:6px 10px; border-radius:12px; border:1px solid rgba(255,255,255,.10); background:rgba(0,0,0,.18);}
+    nav{position:fixed; bottom:0; left:0; right:0; padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+        background:linear-gradient(to top, rgba(11,16,32,.98), rgba(11,16,32,.5));
+        border-top:1px solid rgba(255,255,255,.06); backdrop-filter: blur(10px); display:flex; gap:8px; justify-content:space-between;}
+    nav button{flex:1;}
+    .hidden{display:none !important;}
+    .hr{height:1px; background:rgba(255,255,255,.08); margin:12px 0;}
+    .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:84px; background:rgba(0,0,0,.72);
+           border:1px solid rgba(255,255,255,.14); color:var(--text); padding:10px 12px; border-radius:999px; font-size:13px; z-index:50;}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="title">NexusAlchemy — Player</div>
+    <div class="sub">Коди обміну • Інвентар • Книга рецептів • Нотатки (редагуй сам)</div>
+  </header>
+
+  <main>
+    <section id="view-inv">
+      <div class="card">
+        <div class="row">
+          <div>
+            <div style="font-weight:800; font-size:16px;">Інвентар</div>
+            <div class="muted" style="font-size:12px; margin-top:4px;">Матеріали приходять від майстра через код (loot / craft_result).</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn small danger" id="btn-reset">Скинути дані</button>
+        </div>
+        <div class="hr"></div>
+        <div class="row">
+          <input class="input" id="inv-filter" placeholder="Пошук: назва / сутність / рідкість" />
+        </div>
+      </div>
+      <div class="list" id="inv-list"></div>
+      <div class="card muted" style="font-size:12px;">
+        Порада: запит на крафт робиться у вкладці <b>Крафт</b> (код <span class="mono">NXREQ|…</span>).
+      </div>
+    </section>
+
+    <section id="view-craft" class="hidden">
+      <div class="card">
+        <div style="font-weight:800; font-size:16px;">Запит на крафт</div>
+        <div class="muted" style="font-size:12px; margin-top:4px;">
+          Це <b>не витрачає</b> матеріали. Витрати/додатки прийдуть у відповіді майстра (craft_result).
+        </div>
+        <div class="hr"></div>
+
+        <div class="grid two">
+          <div>
+            <label class="muted" style="font-size:12px;">Назва інгредієнта</label>
+            <input class="input" id="cr-name" placeholder="Напр. 'Пелюстки нічної орхідеї' або 'Ignis'" />
+          </div>
+          <div>
+            <label class="muted" style="font-size:12px;">К-сть</label>
+            <input class="input" id="cr-qty" type="number" min="1" value="1" />
+          </div>
+          <div>
+            <label class="muted" style="font-size:12px;">Сутність</label>
+            <select class="input" id="cr-ess">
+              <option value="">(не вказано)</option>
+              <option>Aether</option><option>Ignis</option><option>Mortis</option><option>Solidus</option><option>Vitalis</option>
+            </select>
+          </div>
+          <div>
+            <label class="muted" style="font-size:12px;">Рідкість</label>
+            <select class="input" id="cr-rar">
+              <option value="">(не вказано)</option>
+              <option>Common</option><option>Uncommon</option><option>Rare</option><option>Very Rare</option><option>Legendary</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <button class="btn small ok" id="btn-add-req">Додати</button>
+          <div class="spacer"></div>
+          <button class="btn small danger" id="btn-clear-req">Очистити</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div style="font-weight:800;">Інгредієнти в запиті</div>
+          <div class="spacer"></div>
+          <span class="tag" id="req-count">0 позицій</span>
+        </div>
+        <div class="hr"></div>
+        <div class="list" id="req-list"></div>
+        <div class="hr"></div>
+
+        <div class="row">
+          <button class="btn primary" id="btn-make-req">Згенерувати код запиту</button>
+          <button class="btn" id="btn-copy-req">Скопіювати</button>
+          <button class="btn" id="btn-share-req">Поділитись</button>
+        </div>
+        <div style="margin-top:10px;">
+          <textarea id="req-code" placeholder="Тут зʼявиться код запиту…"></textarea>
+        </div>
+
+        <div class="muted" style="font-size:12px; margin-top:10px;">
+          Формат: <span class="mono">NXREQ|…</span> (не підписаний — майстер приймає як “заявку”).
+        </div>
+      </div>
+    </section>
+
+    <section id="view-recipes" class="hidden">
+      <div class="card">
+        <div class="row">
+          <div>
+            <div style="font-weight:800; font-size:16px;">Книга рецептів</div>
+            <div class="muted" style="font-size:12px; margin-top:4px;">
+              Тут приходить лише <b>візуальний опис</b>. Поле “Нотатки/ефекти” — твоє, редагуй як хочеш.
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <input class="input" id="rec-filter" placeholder="Пошук…" style="max-width:220px;" />
+        </div>
+      </div>
+      <div class="list" id="rec-list"></div>
+    </section>
+
+    <section id="view-import" class="hidden">
+      <div class="card">
+        <div style="font-weight:800; font-size:16px;">Імпорт коду від майстра</div>
+        <div class="muted" style="font-size:12px; margin-top:4px;">
+          Вставляй коди <span class="mono">NXA1|…</span>. Повторний імпорт того ж пакунка блокується (навіть якщо змінити текст/імʼя).
+        </div>
+        <div class="hr"></div>
+        <textarea id="imp-code" placeholder="Встав код від майстра…"></textarea>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn primary" id="btn-import">Імпортувати</button>
+          <button class="btn" id="btn-paste">Вставити з буфера</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div style="font-weight:800;">Історія (останні 20)</div>
+          <div class="spacer"></div>
+          <button class="btn small" id="btn-export">Експорт JSON (backup)</button>
+          <button class="btn small" id="btn-import-json">Імпорт JSON</button>
+        </div>
+        <div class="hr"></div>
+        <div id="hist-list" class="list"></div>
+      </div>
+    </section>
+  </main>
+
+  <nav>
+    <button class="btn small" data-tab="inv">Інвентар</button>
+    <button class="btn small" data-tab="craft">Крафт</button>
+    <button class="btn small" data-tab="recipes">Рецепти</button>
+    <button class="btn small" data-tab="import">Код</button>
+  </nav>
+</div>
+
+<script src="app.js"></script>
+<script>
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  }
+</script>
+</body>
+</html>
