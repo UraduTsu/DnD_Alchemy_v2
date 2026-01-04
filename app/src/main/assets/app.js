@@ -516,8 +516,20 @@ function setTab(tab){
 let state = loadState();
 
 function wire(){
+  // Навігація на телефонах іноді "губить" click (особливо у WebView). Тому слухаємо pointerup + click.
+  let _lastNav = 0;
+  const _navHandler = (btn) => (ev) => {
+    const now = Date.now();
+    if(now - _lastNav < 250) return; // захист від подвійного спрацювання
+    _lastNav = now;
+    try{ ev.preventDefault(); ev.stopPropagation(); }catch(_){ }
+    setTab(btn.dataset.tab);
+  };
   document.querySelectorAll('nav button').forEach(btn=>{
-    btn.addEventListener('click', ()=>setTab(btn.dataset.tab));
+    const h = _navHandler(btn);
+    btn.addEventListener('pointerup', h, {passive:false});
+    btn.addEventListener('click', h);
+    btn.addEventListener('touchend', h, {passive:false});
   });
 
   document.getElementById('inv-filter').addEventListener('input', renderInventory);
