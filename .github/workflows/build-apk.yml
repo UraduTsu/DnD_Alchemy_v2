@@ -7,50 +7,48 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
 
-      - name: Debug tree (show where files are)
-        run: |
-          echo "=== ROOT ==="
-          ls -la
-          echo "=== FIND gradlew ==="
-          find . -maxdepth 3 -type f -name "gradlew" -print
-          echo "=== FIND settings.gradle* ==="
-          find . -maxdepth 3 -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Build Debug APK (auto-detect gradlew)
+      - name: Build Debug APK (no wrapper jar)
         run: |
           set -euxo pipefail
 
-          if [ -f "./gradlew" ]; then
-            # Fix CRLF if uploaded from Windows
-            sed -i 's/\r$//' ./gradlew
-            chmod +x ./gradlew
-            ./gradlew :app:assembleDebug
-
-          elif [ -f "./android/gradlew" ]; then
-            sed -i 's/\r$//' ./android/gradlew
-            chmod +x ./android/gradlew
-            cd android
-            ./gradlew :app:assembleDebug
-
-          else
-            echo "ERROR: gradlew not found in root or ./android/"
-            exit 1
+          # Detect Android project root (root or ./android)
+          ROOT="."
+          if [ -f "./android/settings.gradle" ] || [ -f "./android/settings.gradle.kts" ]; then
+            ROOT="./android"
           fi
+          echo "Project root: $ROOT"
+
+          # Try to read Gradle distribution from gradle-wrapper.properties
+          PROPS="$ROOT/gradle/wrapper/gradle-wrapper.properties"
+          if [ -f "$PROPS" ]; then
+            DIST_URL=$(grep -E '^distributionUrl=' "$PROPS" | cut -d= -f2- | sed 's/\\:/:/g')
+          else
+            # Fallback (if properties are also missing)
+            DIST_URL="https://services.gradle.org/distributions/gradle-8.7-bin.zip"
+          fi
+          echo "Using Gradle: $DIST_URL"
+
+          curl -L "$DIST_URL" -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp/gradle
+          GRADLE_BIN=$(find /tmp/gradle -type f -path "*/bin/gradle" -print -quit)
+
+          cd "$ROOT"
+          "$GRADLE_BIN" :app:assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nexus-alchemy-debug-apk
-          path: |
-            **/app/build/outputs/apk/debug/*.apk
+          path: "**/app/build/outputs/apk/debug/*.apk"
           if-no-files-found: error
