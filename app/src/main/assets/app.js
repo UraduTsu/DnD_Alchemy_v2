@@ -19,6 +19,10 @@ const CODE_PREFIX_V2 = "NXA2|";
 const REQ_PREFIX_V1  = "NXREQ|";
 const REQ_PREFIX_V2  = "NXQ2|";
 
+// Short signatures reduce code length a lot, while still blocking casual edits.
+// We accept both full (32 bytes) and truncated signatures.
+const SIG_TRUNC_BYTES = 12; // 96-bit tag
+
 const STORAGE_KEY = "nxa_player_state_v1";
 
 const RARITIES = ["Common","Uncommon","Rare","Very Rare","Legendary"];
@@ -59,6 +63,18 @@ function essenceLabel(e){
 
 
 function nowIso(){ return new Date().toISOString(); }
+function shortPackId(){
+  // 64-bit random id encoded as base64url (11 chars). Much shorter than UUID.
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return base64urlEncode(bytes);
+}
+function epochSec(){ return Math.floor(Date.now()/1000); }
+function epochToIso(sec){
+  const s = Number(sec);
+  if(!Number.isFinite(s)) return nowIso();
+  return new Date(s*1000).toISOString();
+}
 function toast(msg){
   const el = document.createElement('div');
   el.className = 'toast';
@@ -80,10 +96,18 @@ function bindTap(el, handler){
       if(res && typeof res.then === 'function') res.catch((err)=>console.error(err));
     }catch(err){ console.error(err); }
   };
-  // Mobile/WebView sometimes loses 'click'. We listen to pointerup + touchend too.
-  el.addEventListener('pointerup', wrapped, {passive:false});
-  el.addEventListener('touchend', wrapped, {passive:false});
-  el.addEventListener('click', wrapped);
+  // IMPORTANT: do NOT subscribe to multiple "tap" event types at the same time.
+  // On many Android WebViews a single tap fires: touchend/pointerup *and then* a synthetic click.
+  // If we listen to both, a modal can open on pointerup and instantly close on the synthetic click.
+  const hasPointer = typeof window !== 'undefined' && typeof window.PointerEvent !== 'undefined';
+  const hasTouch = typeof window !== 'undefined' && ('ontouchend' in window);
+  if(hasPointer){
+    el.addEventListener('pointerup', wrapped, {passive:false});
+  }else if(hasTouch){
+    el.addEventListener('touchend', wrapped, {passive:false});
+  }else{
+    el.addEventListener('click', wrapped);
+  }
 }
 
 function confirmOverlay(message, yesLabel='Так', noLabel='Ні'){
@@ -139,10 +163,9 @@ function confirmOverlay(message, yesLabel='Так', noLabel='Ні'){
     const cleanup = () => { try{ ov.remove(); }catch(_){ } };
     bindTap(no, ()=>{ cleanup(); resolve(false); });
     bindTap(yes, ()=>{ cleanup(); resolve(true); });
-    // tap outside cancels
-    bindTap(ov, (ev)=>{
-      if(ev.target === ov){ cleanup(); resolve(false); }
-    });
+    // NOTE: We intentionally do NOT close on tapping the backdrop.
+    // Some Android WebViews dispatch delayed synthetic clicks (300ms),
+    // which can instantly close the modal and make buttons "do nothing".
   });
 }
 
@@ -229,7 +252,7 @@ function expandNxa2(obj){
     v: 1,
     type: type,
     pack_id: obj.id,
-    issued_at: obj.at,
+    issued_at: (typeof obj.at === 'number') ? epochToIso(obj.at) : obj.at,
     data: {}
   };
   const d = obj.d || {};
@@ -278,8 +301,10 @@ async function decodeDmCode(code){
 
   // Signature is calculated over the *exact* payload bytes (raw JSON for v1, gzip bytes for v2).
   const goodSig = await hmacSign(payloadBytes);
-  if(sigBytes.length !== goodSig.length) throw new Error("Підпис не збігається");
-  for(let i=0;i<sigBytes.length;i++) if(sigBytes[i] !== goodSig[i]) throw new Error("Підпис не збігається");
+  // Support both full and truncated signatures.
+  if(sigBytes.length !== goodSig.length && sigBytes.length !== SIG_TRUNC_BYTES) throw new Error("Підпис не збігається");
+  const n = sigBytes.length;
+  for(let i=0;i<n;i++) if(sigBytes[i] !== goodSig[i]) throw new Error("Підпис не збігається");
 
   const payloadStr = isV2
     ? await gzipDecompressToUtf8(payloadBytes)
@@ -298,7 +323,7 @@ function compactReqV2(reqObj){
     v: 2,
     t: 'Q',
     id: reqObj.pack_id || '',
-    at: reqObj.issued_at || nowIso(),
+    at: (typeof reqObj.issued_at === 'number') ? reqObj.issued_at : epochSec(),
     it: items.filter(Boolean).map(i => [i.essence, (i.rarity||'Common'), Number(i.qty||0)])
   };
 }
@@ -1098,7 +1123,7 @@ function wire(){
       }
     }
 
-    const payload = { v: 1, type: 'craft_request', pack_id: crypto.randomUUID(), issued_at: nowIso(), items: reqItems.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
+    const payload = { v: 1, type: 'craft_request', pack_id: shortPackId(), issued_at: epochSec(), items: reqItems.map(x=>({essence:x.essence, rarity:(x.rarity||'Common'), qty:x.qty})) };
     document.getElementById('req-code').value = await makeReqCode(payload);
     toast('Код згенеровано');
   });
